@@ -260,7 +260,6 @@ object Titles {
             else -> low
         }
     }.joinToString(" ")
-    }
 }
 
 data class Row(val title: String, val items: List<CatalogItem>)
