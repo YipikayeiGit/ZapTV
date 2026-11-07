@@ -14,7 +14,7 @@ android {
         // Número de compilación de GitHub: así la app sabe si hay una versión más nueva
         val build = System.getenv("BUILD_NUMBER")?.toIntOrNull() ?: 1
         versionCode = build
-        versionName = "2.6 ($build)"
+        versionName = "2.7 ($build)"
         // Solo los procesadores de Fire TV y móviles: APK más pequeña
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
     }

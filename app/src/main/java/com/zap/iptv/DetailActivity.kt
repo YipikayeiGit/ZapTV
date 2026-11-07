@@ -39,9 +39,20 @@ class DetailActivity : AppCompatActivity() {
 
     private val seasonAdapter = ChipAdapter { pos -> showSeason(pos) }
     private var knownBefore = 0
-    private val episodeAdapter = EpisodeAdapter(isNew = { ep -> knownBefore > 0 && Episodes.code(ep) > knownBefore }) { ep ->
-        pickSource(ep)
-    }
+    private val episodeAdapter = EpisodeAdapter(
+        isNew = { ep -> knownBefore > 0 && Episodes.code(ep) > knownBefore },
+        isWatched = { ep -> ep.watched || epKey(ep) in watchedKeys() },
+        progress = { ep ->
+            val pos = getSharedPreferences("resume", MODE_PRIVATE).getLong(epKey(ep), 0L).takeIf { it > 0 } ?: ep.offsetMs
+            val dur = (ep.minutes ?: 0) * 60_000L
+            if (pos > 0 && dur > 0) pos.toFloat() / dur else 0f
+        },
+    ) { ep -> pickSource(ep) }
+
+    private fun epKey(ep: Episode) = "ep:${item.key}:${ep.season}:${ep.number}"
+
+    private fun watchedKeys(): Set<String> =
+        getSharedPreferences("watched", MODE_PRIVATE).getStringSet("keys", emptySet()).orEmpty()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -370,6 +381,8 @@ class DetailActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         starting = false
+        // Al volver del reproductor: actualizar ✓ y barras de progreso
+        if (::item.isInitialized && item is Show) episodeAdapter.refreshMarks()
     }
 
     private fun startPlayback(title: String, src: SourceRef, resumeKey: String, fromStart: Boolean) {

@@ -242,6 +242,12 @@ class PlayerActivity : AppCompatActivity() {
         resume.edit().apply {
             if (pos > 30_000 && pos < dur * 0.95) putLong(key, pos) else remove(key)
         }.apply()
+        // Visto casi entero: se marca con ✓
+        if (pos >= dur * 0.9) {
+            val w = getSharedPreferences("watched", MODE_PRIVATE)
+            val keys = HashSet(w.getStringSet("keys", emptySet()).orEmpty())
+            if (keys.add(key)) w.edit().putStringSet("keys", keys).apply()
+        }
         // Cuándo se vio, para ordenar "Seguir viendo"
         getSharedPreferences("resume_t", MODE_PRIVATE).edit().putLong(key, System.currentTimeMillis()).apply()
     }

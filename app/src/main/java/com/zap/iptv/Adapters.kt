@@ -128,6 +128,8 @@ class PosterAdapter(
     private val spans: () -> Int,
     /** Ancho fijo (filas horizontales); 0 = repartir el ancho en columnas. */
     private val fixedWidthPx: Int = 0,
+    /** Tarjetas apaisadas (16:9) con la imagen de fondo, como Plex. */
+    private val landscape: Boolean = false,
     private val onClick: (CatalogItem) -> Unit,
 ) : RecyclerView.Adapter<PosterAdapter.VH>() {
 
@@ -174,7 +176,9 @@ class PosterAdapter(
         } else {
             total / spans() - pad
         }
-        h.box.layoutParams = h.box.layoutParams.apply { height = (w * 1.5f).toInt() }
+        h.box.layoutParams = h.box.layoutParams.apply {
+            height = if (landscape) w * 9 / 16 else (w * 1.5f).toInt()
+        }
         return h
     }
 
@@ -194,10 +198,11 @@ class PosterAdapter(
         h.quality.visibility = if (q != null) View.VISIBLE else View.GONE
         h.ph.text = it.title
         h.ph.visibility = View.VISIBLE
-        if (it.poster != null) {
-            h.img.load(it.poster) {
+        val image = if (landscape) it.art ?: it.poster else it.poster
+        if (image != null) {
+            h.img.load(image) {
                 crossfade(false)
-                size(300, 450)
+                if (landscape) size(480, 270) else size(300, 450)
                 listener(onSuccess = { _, _ -> h.ph.visibility = View.INVISIBLE })
             }
         } else {
@@ -211,8 +216,15 @@ class PosterAdapter(
 
 class EpisodeAdapter(
     private val isNew: (Episode) -> Boolean = { false },
+    /** ¿Visto? (en Plex o en la app) */
+    private val isWatched: (Episode) -> Boolean = { false },
+    /** Parte vista (0–1) si está a medias. */
+    private val progress: (Episode) -> Float = { 0f },
     private val onClick: (Episode) -> Unit,
 ) : RecyclerView.Adapter<EpisodeAdapter.VH>() {
+
+    @SuppressLint("NotifyDataSetChanged")
+    fun refreshMarks() = notifyDataSetChanged()
 
     private var items: List<Episode> = emptyList()
 
@@ -229,6 +241,9 @@ class EpisodeAdapter(
         val title: TextView = v.findViewById(R.id.title)
         val summary: TextView = v.findViewById(R.id.summary)
         val badge: TextView = v.findViewById(R.id.badge)
+        val seen: View = v.findViewById(R.id.seen)
+        val track: View = v.findViewById(R.id.progressTrack)
+        val fill: View = v.findViewById(R.id.progressFill)
 
         init {
             thumbBox.clipToOutline = true
@@ -262,6 +277,16 @@ class EpisodeAdapter(
             e.minutes?.let { "$it min" },
             origins,
         ).joinToString(" · ")
+        val watched = isWatched(e)
+        h.seen.visibility = if (watched) View.VISIBLE else View.GONE
+        val part = if (watched) 0f else progress(e).coerceIn(0f, 1f)
+        if (part > 0.01f) {
+            h.track.visibility = View.VISIBLE
+            h.fill.layoutParams = h.fill.layoutParams.apply { width = (h.thumbBox.layoutParams.width * part).toInt() }
+        } else {
+            h.track.visibility = View.GONE
+        }
+        h.thumb.alpha = if (watched) 0.6f else 1f
         h.num.visibility = View.VISIBLE
         if (e.thumb != null) {
             h.thumb.load(e.thumb) {
@@ -293,7 +318,9 @@ class RowsAdapter(private val onClick: (CatalogItem) -> Unit) :
         notifyDataSetChanged()
     }
 
-    inner class VH(v: View) : RecyclerView.ViewHolder(v) {
+    override fun getItemViewType(position: Int) = if (rows[position].landscape) 1 else 0
+
+    inner class VH(v: View, landscape: Boolean) : RecyclerView.ViewHolder(v) {
         val title: TextView = v.findViewById(R.id.rowTitle)
         val list: RecyclerView = v.findViewById(R.id.rowList)
         val adapter: PosterAdapter
@@ -301,8 +328,13 @@ class RowsAdapter(private val onClick: (CatalogItem) -> Unit) :
         init {
             val dm = v.resources.displayMetrics
             val wideScreen = dm.widthPixels / dm.density > 700
-            val w = ((if (wideScreen) 130 else 108) * dm.density).toInt()
-            adapter = PosterAdapter({ 1 }, w, onClick)
+            val wDp = when {
+                landscape && wideScreen -> 230
+                landscape -> 172
+                wideScreen -> 130
+                else -> 108
+            }
+            adapter = PosterAdapter({ 1 }, (wDp * dm.density).toInt(), landscape, onClick)
             list.layoutManager = LinearLayoutManager(v.context, RecyclerView.HORIZONTAL, false)
             list.adapter = adapter
             list.isFocusable = false
@@ -312,7 +344,7 @@ class RowsAdapter(private val onClick: (CatalogItem) -> Unit) :
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
-        VH(LayoutInflater.from(parent.context).inflate(R.layout.item_row, parent, false))
+        VH(LayoutInflater.from(parent.context).inflate(R.layout.item_row, parent, false), viewType == 1)
 
     override fun onBindViewHolder(h: VH, position: Int) {
         val row = rows[position]

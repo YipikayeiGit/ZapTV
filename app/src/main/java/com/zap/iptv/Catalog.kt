@@ -75,6 +75,8 @@ interface CatalogItem {
     val genreKeys: Set<String>
     /** "4K", "HD" o null. */
     val quality: String?
+    /** Imagen horizontal (fondo) para las tarjetas apaisadas. */
+    val art: String?
     /** plex://…, imdb://…, tmdb://… para cruzar fuentes y Mi lista. */
     val ids: List<String>
     /** Título y títulos alternativos (original, nombre en Mi lista…) normalizados, para buscar. */
@@ -98,6 +100,7 @@ data class Movie(
     val extIds: List<String> = emptyList(),
     /** Otros títulos (original, en otro idioma…). */
     val altTitles: List<String> = emptyList(),
+    override val art: String? = null,
     override val key: String = Titles.key(title),
 ) : CatalogItem {
     override val origins: Set<Origin> get() = sources.mapTo(HashSet()) { it.origin }
@@ -122,6 +125,7 @@ data class Show(
     override val quality: String? = null,
     val extIds: List<String> = emptyList(),
     val altTitles: List<String> = emptyList(),
+    override val art: String? = null,
     override val key: String = Titles.key(title),
 ) : CatalogItem {
     override val genreKeys: Set<String> by lazy { genres.mapTo(HashSet()) { Titles.genreKey(it) } }
@@ -144,6 +148,9 @@ data class Episode(
     val thumb: String? = null,
     val summary: String? = null,
     val minutes: Int? = null,
+    /** Visto en Plex, y por dónde ibas si está a medias. */
+    val watched: Boolean = false,
+    val offsetMs: Long = 0,
 )
 
 data class IptvData(val live: List<Channel>, val movies: List<Movie>, val shows: List<Show>) {
@@ -387,6 +394,7 @@ object Merge {
                     genres = mergeGenres(o.genres, m.genres),
                     extIds = (o.extIds + m.extIds).distinct(),
                     altTitles = alts(o.title, o.altTitles, m.title, m.altTitles),
+                    art = o.art ?: m.art,
                 )
             } else {
                 pos = out.size
@@ -425,6 +433,7 @@ object Merge {
                     quality = Quality.best(listOf(o.quality, s.quality)),
                     extIds = (o.extIds + s.extIds).distinct(),
                     altTitles = alts(o.title, o.altTitles, s.title, s.altTitles),
+                    art = o.art ?: s.art,
                 )
             } else {
                 pos = out.size
@@ -458,6 +467,8 @@ object Merge {
                 thumb = o.thumb ?: e.thumb,
                 summary = o.summary ?: e.summary,
                 minutes = o.minutes ?: e.minutes,
+                watched = o.watched || e.watched,
+                offsetMs = maxOf(o.offsetMs, e.offsetMs),
             )
         }
         return map.values.sortedWith(compareBy({ it.season }, { it.number }))
@@ -488,6 +499,39 @@ object Titles {
     }
 
     fun key(title: String): String = fold(title).replace(NON_ALNUM, " ").trim()
+
+    private val EP_CODE = Regex(
+        """(?i)\b(s\d{1,2}\s*[ex]\s*\d{1,3}|\d{1,2}x\d{1,3}|t\d{1,2}\s*e\d{1,3}|temporada\s*\d+|(?:cap[ií]tulo|episodio|episode|ep)\.?\s*\d+)\b"""
+    )
+    private val LANG_CODE = Regex("[A-Z]{2,3}")
+    private val EP_SPLIT = Regex("""\s+[-–|:]\s+|\s*\|\s*""")
+
+    /**
+     * "Breaking Bad - S04E01 - 1080p" → null (sin título real) ;
+     * "Breaking Bad S01E02 Gato en la bolsa" → "Gato en la bolsa".
+     */
+    fun episode(raw: String?, show: String?): String? {
+        if (raw.isNullOrBlank()) return null
+        val showKey = show?.let { key(clean(it).title) }.orEmpty()
+        val parts = raw.split(EP_SPLIT).mapNotNull { p0 ->
+            var p = p0.replace(BRACKETS, " ").replace(EP_CODE, " ").replace(TAGS, " ")
+                .replace(PREFIX, "").replace(SPACES, " ").trim().trim('-', '–', '|', ':', '.', ' ')
+            // Quitar el nombre de la serie si va delante
+            if (showKey.isNotEmpty()) {
+                val words = p.split(' ')
+                var i = 0
+                while (i < words.size) {
+                    val acc = key(words.take(i + 1).joinToString(" "))
+                    if (acc.isNotEmpty() && showKey.startsWith(acc)) i++ else break
+                }
+                if (i > 0 && key(words.take(i).joinToString(" ")) == showKey) p = words.drop(i).joinToString(" ")
+            }
+            p = p.trim().trim('-', '–', '|', ':', '.', ' ')
+            val k = key(p)
+            if (k.isEmpty() || k == showKey || k.all { it.isDigit() || it == ' ' } || LANG_CODE.matches(p)) null else p
+        }
+        return parts.joinToString(" - ").ifEmpty { null }
+    }
 
     private val GENRE_KEYS = ConcurrentHashMap<String, String>()
     fun genreKey(g: String): String = GENRE_KEYS.getOrPut(g) { key(g) }
@@ -521,7 +565,8 @@ object Titles {
     }.joinToString(" ")
 }
 
-data class Row(val title: String, val items: List<CatalogItem>)
+/** [landscape] = tarjetas apaisadas (como Plex para series y "Seguir viendo"). */
+data class Row(val title: String, val items: List<CatalogItem>, val landscape: Boolean = false)
 
 /** Filas de la pantalla de inicio de Películas y Series. */
 object Home {
@@ -570,8 +615,8 @@ object Home {
         newEpisodes: List<CatalogItem> = emptyList(),
     ): List<Row> {
         val out = ArrayList<Row>()
-        if (newEpisodes.isNotEmpty()) out += Row("Nuevos capítulos", newEpisodes)
-        if (resume.isNotEmpty()) out += Row("Seguir viendo", resume)
+        if (newEpisodes.isNotEmpty()) out += Row("Nuevos capítulos", newEpisodes, landscape = true)
+        if (resume.isNotEmpty()) out += Row("Seguir viendo", resume, landscape = true)
         if (watch.isNotEmpty()) out += Row("Mi lista de Plex", watch)
 
         val recent = items.filter { it.added > 0 }.sortedByDescending { it.added }.take(40)
@@ -606,6 +651,7 @@ object Home {
             if (list.size >= 5) out += Row(g, list)
         }
         if (out.isEmpty() && items.isNotEmpty()) out += Row("Todo", items.take(60))
-        return out
+        // En Series, todas las filas apaisadas
+        return if (items.isNotEmpty() && items.all { it is Show }) out.map { it.copy(landscape = true) } else out
     }
 }

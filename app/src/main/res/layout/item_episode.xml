@@ -33,6 +33,37 @@
             android:layout_height="match_parent"
             android:importantForAccessibility="no"
             android:scaleType="centerCrop" />
+
+        <!-- Visto: ✓ discreto -->
+        <TextView
+            android:id="@+id/seen"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_gravity="top|end"
+            android:layout_margin="5dp"
+            android:background="@drawable/bg_seen"
+            android:gravity="center"
+            android:text="✓"
+            android:textColor="@color/bg"
+            android:textSize="13sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <!-- A medias: barra de progreso -->
+        <FrameLayout
+            android:id="@+id/progressTrack"
+            android:layout_width="match_parent"
+            android:layout_height="3dp"
+            android:layout_gravity="bottom"
+            android:background="#80000000"
+            android:visibility="gone">
+
+            <View
+                android:id="@+id/progressFill"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:background="@color/accent" />
+        </FrameLayout>
     </FrameLayout>
 
     <LinearLayout

@@ -13,7 +13,7 @@ import java.io.FileOutputStream
  * sin volver a leer los archivos enormes del proveedor.
  */
 object Snapshot {
-    private const val VERSION = 7
+    private const val VERSION = 8
 
     // ---------- Escritura ----------
 
@@ -47,7 +47,7 @@ object Snapshot {
         str(m.title); writeInt(m.year ?: -1); str(m.poster); str(m.plot)
         writeLong(m.added); writeFloat(m.rating ?: -1f); strs(m.genres)
         writeInt(m.sources.size); m.sources.forEach { source(it) }
-        strs(m.extIds); strs(m.altTitles)
+        strs(m.extIds); strs(m.altTitles); str(m.art)
     }
 
     private fun DataOutputStream.show(s: Show) {
@@ -55,7 +55,7 @@ object Snapshot {
         writeInt(s.plex.size); s.plex.forEach { str(it.server); str(it.key); str(it.guid) }
         strs(s.xtreamIds)
         writeInt(s.episodes.size); s.episodes.forEach { episode(it) }
-        writeLong(s.added); writeFloat(s.rating ?: -1f); strs(s.genres); str(s.quality); strs(s.extIds); strs(s.altTitles)
+        writeLong(s.added); writeFloat(s.rating ?: -1f); strs(s.genres); str(s.quality); strs(s.extIds); strs(s.altTitles); str(s.art)
     }
 
     private fun write(file: File, tag: String, body: DataOutputStream.() -> Unit) {
@@ -138,7 +138,8 @@ object Snapshot {
             val sources = List(int()) { source() }
             val extIds = strs()
             val alts = strs()
-            return Movie(title, year, poster, sources, plot, added, rating, genres, extIds, alts)
+            val art = str()
+            return Movie(title, year, poster, sources, plot, added, rating, genres, extIds, alts, art)
         }
 
         fun show(): Show {
@@ -155,8 +156,9 @@ object Snapshot {
             val quality = shared()
             val extIds = strs()
             val alts = strs()
+            val art = str()
             return Show(
-                title, year, poster, plot, plex, xtream, episodes, added, rating, genres, quality, extIds, alts,
+                title, year, poster, plot, plex, xtream, episodes, added, rating, genres, quality, extIds, alts, art,
             )
         }
     }

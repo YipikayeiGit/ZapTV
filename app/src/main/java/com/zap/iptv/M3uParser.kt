@@ -75,7 +75,7 @@ object M3uParser {
                         val ep = Episode(
                             season = m.groupValues[1].toInt(),
                             number = m.groupValues[2].toInt(),
-                            title = c.name.substring(m.range.last + 1).trim(' ', '-', '|', ':').ifEmpty { null },
+                            title = Titles.episode(c.name.substring(m.range.last + 1), cl.title),
                             sources = listOf(SourceRef(Origin.IPTV, label(c.url), url = c.url)),
                         )
                         val key = Titles.key(cl.title)

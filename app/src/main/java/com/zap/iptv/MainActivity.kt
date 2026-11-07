@@ -12,6 +12,7 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -77,6 +78,8 @@ class MainActivity : AppCompatActivity() {
     private val sideAdapter = ChipAdapter(R.layout.item_side) { pos -> onSide(pos) }
     private val posterAdapter = PosterAdapter({ spans() }) { item -> openDetail(item) }
     private val rowsAdapter = RowsAdapter { item -> openDetail(item) }
+    /** Cuadrícula apaisada para la pestaña Series. */
+    private val landAdapter = PosterAdapter({ spansLand() }, 0, true) { item -> openDetail(item) }
     private val chipAdapter = ChipAdapter { pos -> onChip(pos) }
 
     private val pickFile =
@@ -133,6 +136,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.settings).setOnClickListener { showSources() }
         findViewById<View>(R.id.reload).setOnClickListener { reloadAll() }
         emptyAdd.setOnClickListener { if (tab == Tab.LIVE) showAddDialog() else showSources() }
+        setupBack()
         findViewById<EditText>(R.id.search).doAfterTextChanged { text ->
             query = text?.toString()?.trim().orEmpty()
             typingJob?.cancel()
@@ -181,7 +185,42 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    /**
+     * Atrás: con una búsqueda → la borra y vuelve a Inicio; en otra pestaña → Inicio;
+     * en Inicio → pregunta si quieres salir.
+     */
+    private fun setupBack() {
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                val search = findViewById<EditText>(R.id.search)
+                when {
+                    query.isNotEmpty() || search.text.isNotEmpty() -> {
+                        search.setText("")
+                        query = ""
+                        selectTab(Tab.HOME)
+                        tabs[Tab.HOME]?.requestFocus()
+                    }
+                    tab != Tab.HOME -> {
+                        selectTab(Tab.HOME)
+                        tabs[Tab.HOME]?.requestFocus()
+                    }
+                    else -> MaterialAlertDialogBuilder(this@MainActivity)
+                        .setTitle("¿Salir de Zap?")
+                        .setPositiveButton("Salir") { _, _ -> finish() }
+                        .setNegativeButton("Cancelar", null)
+                        .show()
+                        .getButton(AlertDialog.BUTTON_NEGATIVE)?.requestFocus()
+                }
+            }
+        })
+    }
+
     // ---------- Pestañas y filtros ----------
+
+    private fun spansLand(): Int {
+        val dp = resources.displayMetrics.widthPixels / resources.displayMetrics.density
+        return (dp / 240f).toInt().coerceIn(2, 5)
+    }
 
     private fun spans(): Int {
         val dp = resources.displayMetrics.widthPixels / resources.displayMetrics.density
@@ -200,7 +239,11 @@ class MainActivity : AppCompatActivity() {
     /** Cambia la lista de contenido (canales, filas o cuadrícula) solo si hace falta. */
     private fun useAdapter(a: RecyclerView.Adapter<*>) {
         if (content.adapter === a) return
-        content.layoutManager = if (a === posterAdapter) GridLayoutManager(this, spans()) else LinearLayoutManager(this)
+        content.layoutManager = when {
+            a === posterAdapter -> GridLayoutManager(this, spans())
+            a === landAdapter -> GridLayoutManager(this, spansLand())
+            else -> LinearLayoutManager(this)
+        }
         content.adapter = a
     }
 
@@ -368,9 +411,10 @@ class MainActivity : AppCompatActivity() {
                             else -> src
                         }
                     }
-                    useAdapter(posterAdapter)
-                    posterAdapter.showKind = false
-                    posterAdapter.submit(res)
+                    val grid = if (shows) landAdapter else posterAdapter
+                    useAdapter(grid)
+                    grid.showKind = false
+                    grid.submit(res)
                 }
             }
             if (scrollTop) content.scrollToPosition(0)

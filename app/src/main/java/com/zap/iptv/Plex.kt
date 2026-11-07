@@ -338,12 +338,14 @@ object Plex {
                                 )
                             ),
                             x.summary, x.added, rating, genres, altTitles = alts,
+                            art = x.art?.let { still(s, it) },
                         )
                     } else {
                         shows += Show(
                             title, year, poster, x.summary, plex = listOf(PlexRef(s.id, x.key, x.guid)),
                             added = x.added, rating = rating, genres = genres, extIds = x.extIds.toList(),
                             altTitles = alts,
+                            art = x.art?.let { still(s, it) },
                         )
                     }
                 }
@@ -363,6 +365,7 @@ object Plex {
         var originalTitle: String? = null
         var year = 0
         var thumb: String? = null
+        var art: String? = null
         var summary: String? = null
         var added = 0L
         var audienceRating = 0.0
@@ -437,6 +440,7 @@ object Plex {
                 "originalTitle" -> x.originalTitle = r.strOrNull()
                 "year" -> x.year = r.numOrZero().toInt()
                 "thumb" -> x.thumb = r.strOrNull()
+                "art" -> x.art = r.strOrNull()
                 "summary" -> x.summary = r.strOrNull()?.takeIf { it.isNotBlank() }
                 "addedAt" -> x.added = r.numOrZero().toLong()
                 "audienceRating" -> x.audienceRating = r.numOrZero()
@@ -520,6 +524,8 @@ object Plex {
                 thumb = m.str("thumb")?.let { still(s, it) },
                 summary = m.str("summary"),
                 minutes = m.optLong("duration").takeIf { it > 0 }?.let { (it / 60_000).toInt() },
+                watched = m.optInt("viewCount") > 0,
+                offsetMs = m.optLong("viewOffset"),
             )
         }
     }

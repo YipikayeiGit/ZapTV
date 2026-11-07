@@ -133,7 +133,7 @@ object Xtream {
         val shows = ArrayList<Show>()
         forEachFlatObject(
             File(dir, "series.json"),
-            setOf("series_id", "name", "cover", "plot", "year", "releaseDate", "last_modified", "rating", "category_id", "category_ids", "tmdb", "tmdb_id"),
+            setOf("series_id", "name", "cover", "plot", "year", "releaseDate", "last_modified", "rating", "category_id", "category_ids", "tmdb", "tmdb_id", "backdrop_path"),
         ) { m ->
             val id = m["series_id"] ?: return@forEachFlatObject
             val catIds = catIds(m)
@@ -151,6 +151,7 @@ object Xtream {
                 rating = rating(m["rating"]),
                 genres = genresFor(catIds, seriesGenre),
                 quality = Quality.fromText(name, *catIds.map { seriesCats[it] }.toTypedArray()),
+                art = m["backdrop_path"]?.split(',')?.map { it.trim() }?.firstOrNull { it.startsWith("http") },
                 extIds = tmdb(m),
             )
         }
@@ -184,6 +185,7 @@ object Xtream {
     fun episodes(acc: Account, seriesId: String): List<Episode> {
         val j = JSONObject(Http.get(acc.api("get_series_info", "&series_id=$seriesId"), timeout = 30_000))
         val out = ArrayList<Episode>()
+        val showName = j.optJSONObject("info")?.str("name")
 
         fun add(e: JSONObject) {
             val id = e.str("id") ?: return
@@ -193,7 +195,7 @@ object Xtream {
             val ext = e.str("container_extension") ?: "mp4"
             val info = e.optJSONObject("info")
             out += Episode(
-                season, num, e.str("title"),
+                season, num, Titles.episode(e.str("title") ?: info?.str("name"), showName),
                 listOf(SourceRef(Origin.IPTV, "IPTV · ${ext.uppercase()}", url = acc.episode(id, ext))),
                 thumb = info?.str("movie_image")?.takeIf { it.startsWith("http") },
                 summary = info?.str("plot"),
