@@ -94,6 +94,7 @@ object Plex {
             .mapNotNull { res.optJSONObject(it) }
             .filter { it.optString("provides").contains("server") }
 
+        val watchJob = async(Dispatchers.IO) { runCatching { watchlist(tok) } }
         val conns = candidates.map { r -> async(Dispatchers.IO) { r to connect(r, tok) } }.awaitAll()
         val found = conns.mapNotNull { it.second.first }
         servers = found.associateBy { it.id }
@@ -117,8 +118,13 @@ object Plex {
             }
         }.awaitAll()
 
+        val watch = watchJob.await()
         status = buildString {
             append("Cuenta: ").append(user ?: "conectada").append('\n')
+            watch.fold(
+                onSuccess = { append("Mi lista: ${it.size} títulos\n") },
+                onFailure = { append("Mi lista: no se pudo leer (${it.message ?: it.javaClass.simpleName})\n") },
+            )
             if (candidates.isEmpty()) {
                 append("No aparece ningún servidor en esta cuenta. Comprueba que el dueño ha compartido sus bibliotecas con este usuario de Plex y que has aceptado la invitación.")
             } else {
@@ -126,9 +132,49 @@ object Plex {
             }
         }
 
-        val data = PlexData(found, parts.flatMap { it.first.movies }, parts.flatMap { it.first.shows })
+        val data = PlexData(
+            found,
+            parts.flatMap { it.first.movies },
+            parts.flatMap { it.first.shows },
+            watch.getOrDefault(emptyList()),
+        )
         save(ctx, data)
         data
+    }
+
+    /** "Mi lista" (watchlist) de la cuenta de Plex. */
+    private fun watchlist(tok: String): List<WatchItem> {
+        var lastError: Exception? = null
+        for (host in listOf("https://discover.provider.plex.tv", "https://metadata.provider.plex.tv")) {
+            try {
+                val out = ArrayList<WatchItem>()
+                var start = 0
+                while (true) {
+                    val j = JSONObject(
+                        Http.get(
+                            "$host/library/sections/watchlist/all?includeCollections=1&includeExternalMedia=1" +
+                                "&X-Plex-Container-Start=$start&X-Plex-Container-Size=200",
+                            headers(tok),
+                        )
+                    )
+                    val mc = j.optJSONObject("MediaContainer") ?: break
+                    val arr = mc.optJSONArray("Metadata")
+                    val n = arr?.length() ?: 0
+                    if (arr != null) for (i in 0 until n) {
+                        val m = arr.optJSONObject(i) ?: continue
+                        val title = m.str("title") ?: continue
+                        out += WatchItem(m.str("guid"), title, m.optInt("year").takeIf { it > 0 }, m.optString("type"))
+                    }
+                    start += 200
+                    val total = mc.optInt("totalSize", -1)
+                    if (n == 0 || (total in 0..start) || (total < 0 && n < 200)) break
+                }
+                return out
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+        throw lastError ?: IOException("sin respuesta")
     }
 
     /**
@@ -191,12 +237,12 @@ object Plex {
                         val label = listOfNotNull("Plex", resLabel(x.resolution), s.name.takeIf { multi }).joinToString(" · ")
                         movies += Movie(
                             title, year, poster,
-                            listOf(SourceRef(Origin.PLEX, label, plexServer = s.id, plexKey = x.key)),
+                            listOf(SourceRef(Origin.PLEX, label, plexServer = s.id, plexKey = x.key, plexGuid = x.guid)),
                             x.summary, x.added, rating, genres,
                         )
                     } else {
                         shows += Show(
-                            title, year, poster, x.summary, plex = listOf(PlexRef(s.id, x.key)),
+                            title, year, poster, x.summary, plex = listOf(PlexRef(s.id, x.key, x.guid)),
                             added = x.added, rating = rating, genres = genres,
                         )
                     }
@@ -212,6 +258,7 @@ object Plex {
     /** Lo mínimo que necesitamos de cada elemento de la biblioteca. */
     private class RawItem {
         var key = ""
+        var guid: String? = null
         var title: String? = null
         var year = 0
         var thumb: String? = null
@@ -281,6 +328,7 @@ object Plex {
         while (r.hasNext()) {
             when (r.nextName()) {
                 "ratingKey" -> x.key = r.strOrNull() ?: ""
+                "guid" -> x.guid = r.strOrNull()
                 "title" -> x.title = r.strOrNull()
                 "year" -> x.year = r.numOrZero().toInt()
                 "thumb" -> x.thumb = r.strOrNull()
@@ -366,7 +414,7 @@ object Plex {
     // ---------- Reproducción ----------
 
     /** Siempre el archivo original (Direct Play): Plex nunca convierte el vídeo. */
-    data class Details(val label: String, val url: String, val subs: List<Sub>)
+    data class Details(val label: String, val url: String, val subs: List<Sub>, val info: Info)
 
     /** Pide a Plex el archivo, idiomas y subtítulos de una peli o episodio. */
     fun details(serverId: String, key: String): Details {
@@ -408,7 +456,38 @@ object Plex {
             subLangs.takeIf { it.isNotEmpty() }?.let { "Subs " + it.joinToString("/") },
         ).joinToString(" · ")
 
-        return Details(label, withToken("${s.uri}$partKey", s.token), subs)
+        return Details(label, withToken("${s.uri}$partKey", s.token), subs, info(s, m))
+    }
+
+    private fun tags(m: JSONObject, name: String): List<String> {
+        val a = m.optJSONArray(name) ?: return emptyList()
+        return (0 until a.length()).mapNotNull { a.optJSONObject(it)?.str("tag") }
+    }
+
+    /** Director, guion, reparto, duración… como en la ficha de Plex. */
+    private fun info(s: PlexServer, m: JSONObject): Info {
+        val roles = m.optJSONArray("Role")
+        val cast = if (roles == null) emptyList() else (0 until roles.length()).mapNotNull { i ->
+            val r = roles.optJSONObject(i) ?: return@mapNotNull null
+            val name = r.str("tag") ?: return@mapNotNull null
+            val photo = r.str("thumb")?.let { if (it.startsWith("/")) withToken("${s.uri}$it", s.token) else it }
+            Person(name, r.str("role"), photo)
+        }
+        val rating = (m.optDouble("audienceRating").takeIf { !it.isNaN() && it > 0 }
+            ?: m.optDouble("rating").takeIf { !it.isNaN() && it > 0 })?.toFloat()
+        return Info(
+            tagline = m.str("tagline"),
+            plot = m.str("summary"),
+            minutes = m.optLong("duration").takeIf { it > 0 }?.let { (it / 60_000).toInt() },
+            contentRating = m.str("contentRating"),
+            studio = m.str("studio"),
+            rating = rating,
+            directors = tags(m, "Director"),
+            writers = tags(m, "Writer"),
+            cast = cast,
+            genres = tags(m, "Genre"),
+            similar = tags(m, "Similar"),
+        )
     }
 
     private fun withToken(url: String, token: String) =
@@ -434,6 +513,7 @@ object Plex {
                 val src = m.sources.first()
                 put(JSONObject().put("t", m.title).put("y", m.year ?: 0).put("p", m.poster ?: "")
                     .put("d", m.plot ?: "").put("s", src.plexServer).put("k", src.plexKey).put("l", src.label)
+                    .put("u", src.plexGuid ?: "")
                     .put("a", m.added).put("r", (m.rating ?: 0f).toDouble()).put("g", JSONArray(m.genres)))
             }
         })
@@ -442,7 +522,13 @@ object Plex {
                 val ref = s.plex.first()
                 put(JSONObject().put("t", s.title).put("y", s.year ?: 0).put("p", s.poster ?: "")
                     .put("d", s.plot ?: "").put("s", ref.server).put("k", ref.key)
+                    .put("u", ref.guid ?: "")
                     .put("a", s.added).put("r", (s.rating ?: 0f).toDouble()).put("g", JSONArray(s.genres)))
+            }
+        })
+        j.put("watch", JSONArray().apply {
+            d.watchlist.forEach { w ->
+                put(JSONObject().put("u", w.guid ?: "").put("t", w.title).put("y", w.year ?: 0).put("k", w.type))
             }
         })
         cacheFile(ctx).writeText(j.toString())
@@ -469,7 +555,7 @@ object Plex {
                     val o = a.getJSONObject(i)
                     Movie(
                         o.getString("t"), o.optInt("y").takeIf { it > 0 }, o.str("p"),
-                        listOf(SourceRef(Origin.PLEX, o.optString("l", "Plex"), plexServer = o.getString("s"), plexKey = o.getString("k"))),
+                        listOf(SourceRef(Origin.PLEX, o.optString("l", "Plex"), plexServer = o.getString("s"), plexKey = o.getString("k"), plexGuid = o.str("u"))),
                         o.str("d"),
                         o.optLong("a"),
                         o.optDouble("r").takeIf { !it.isNaN() && it > 0 }?.toFloat(),
@@ -482,14 +568,20 @@ object Plex {
                     val o = a.getJSONObject(i)
                     Show(
                         o.getString("t"), o.optInt("y").takeIf { it > 0 }, o.str("p"), o.str("d"),
-                        plex = listOf(PlexRef(o.getString("s"), o.getString("k"))),
+                        plex = listOf(PlexRef(o.getString("s"), o.getString("k"), o.str("u"))),
                         added = o.optLong("a"),
                         rating = o.optDouble("r").takeIf { !it.isNaN() && it > 0 }?.toFloat(),
                         genres = genresOf(o),
                     )
                 }
             }
-            PlexData(sv, movies, shows)
+            val watch = j.optJSONArray("watch")?.let { a ->
+                (0 until a.length()).mapNotNull { i ->
+                    val o = a.optJSONObject(i) ?: return@mapNotNull null
+                    WatchItem(o.str("u"), o.optString("t"), o.optInt("y").takeIf { it > 0 }, o.optString("k"))
+                }
+            } ?: emptyList()
+            PlexData(sv, movies, shows, watch)
         }.getOrNull()
     }
 }

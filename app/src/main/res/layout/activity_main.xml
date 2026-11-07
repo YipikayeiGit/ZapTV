@@ -102,9 +102,26 @@
         app:indicatorColor="@color/accent"
         app:trackThickness="2dp" />
 
-    <FrameLayout
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="horizontal">
+
+    <!-- Categorías de TV en directo (a la izquierda) -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/side"
+        android:layout_width="200dp"
+        android:layout_height="match_parent"
+        android:background="@color/surface"
+        android:clipToPadding="false"
+        android:paddingTop="6dp"
+        android:paddingBottom="16dp"
+        android:visibility="gone" />
+
+    <FrameLayout
+        android:layout_width="0dp"
+        android:layout_height="match_parent"
         android:layout_weight="1">
 
         <androidx.recyclerview.widget.RecyclerView
@@ -149,4 +166,5 @@
             android:indeterminateTint="@color/accent"
             android:visibility="gone" />
     </FrameLayout>
+    </LinearLayout>
 </LinearLayout>

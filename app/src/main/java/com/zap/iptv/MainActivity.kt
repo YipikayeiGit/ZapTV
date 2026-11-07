@@ -40,8 +40,10 @@ class MainActivity : AppCompatActivity() {
     private val prefs by lazy { getSharedPreferences("zap", MODE_PRIVATE) }
 
     private var tab = Tab.LIVE
-    private var liveGroups: List<String> = emptyList()
+    /** Categorías del panel lateral: null = Todos, FAV = Favoritos. */
+    private var sideKeys: List<String?> = emptyList()
     private var liveGroup: String? = null
+    private val favorites = HashSet<String>()
     private sealed class VodFilter {
         object Home : VodFilter()
         object AZ : VodFilter()
@@ -59,6 +61,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var tabs: Map<Tab, TextView>
     private lateinit var chips: RecyclerView
+    private lateinit var side: RecyclerView
     private lateinit var content: RecyclerView
     private lateinit var empty: View
     private lateinit var emptyText: TextView
@@ -66,7 +69,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var progress: View
     private lateinit var busyBar: View
 
-    private val channelAdapter = ChannelAdapter { pos -> openChannel(pos) }
+    private val channelAdapter = ChannelAdapter(
+        isFav = { it.url in favorites },
+        onLong = { pos -> toggleFavorite(pos) },
+    ) { pos -> openChannel(pos) }
+    private val sideAdapter = ChipAdapter(R.layout.item_side) { pos -> onSide(pos) }
     private val posterAdapter = PosterAdapter({ spans() }) { item -> openDetail(item) }
     private val rowsAdapter = RowsAdapter { item -> openDetail(item) }
     private val chipAdapter = ChipAdapter { pos -> onChip(pos) }
@@ -92,6 +99,16 @@ class MainActivity : AppCompatActivity() {
             Tab.SHOWS to findViewById(R.id.tabShows),
         )
         chips = findViewById(R.id.chips)
+        side = findViewById(R.id.side)
+        side.layoutManager = LinearLayoutManager(this)
+        side.adapter = sideAdapter
+        side.isFocusable = false
+        // Panel más estrecho en pantallas pequeñas (móvil)
+        val widthDp = resources.displayMetrics.widthPixels / resources.displayMetrics.density
+        side.layoutParams = side.layoutParams.apply {
+            width = ((if (widthDp > 700) 220 else 120) * resources.displayMetrics.density).toInt()
+        }
+        favorites += prefs.getStringSet("favs", emptySet()).orEmpty()
         content = findViewById(R.id.content)
         empty = findViewById(R.id.empty)
         emptyText = findViewById(R.id.emptyText)
@@ -183,12 +200,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderChips() {
+        side.isVisible = tab == Tab.LIVE && Catalog.live.isNotEmpty()
         if (tab == Tab.LIVE) {
-            liveGroups = Catalog.live.map { it.group }.distinct()
-            val lg = liveGroup
-            if (lg != null && lg !in liveGroups) liveGroup = null
-            chipAdapter.submit(listOf("Todos") + liveGroups, liveGroup?.let { liveGroups.indexOf(it) + 1 } ?: 0)
-            chips.isVisible = liveGroups.size > 1
+            chips.isVisible = false
+            renderSide()
         } else {
             val list: List<CatalogItem> = if (tab == Tab.MOVIES) Catalog.movies else Catalog.shows
             val genres = if (tab == Tab.MOVIES) Catalog.movieGenres else Catalog.showGenres
@@ -217,9 +232,44 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onChip(pos: Int) {
-        if (tab == Tab.LIVE) liveGroup = if (pos == 0) null else liveGroups.getOrNull(pos - 1)
-        else vodFilter = vodFilters.getOrElse(pos) { VodFilter.Home }
+        vodFilter = vodFilters.getOrElse(pos) { VodFilter.Home }
         refresh(scrollTop = true)
+    }
+
+    // ---------- TV en directo: categorías y favoritos ----------
+
+    private fun renderSide() {
+        val groups = Catalog.live.map { it.group }.distinct()
+        val hasFavs = Catalog.live.any { it.url in favorites }
+        sideKeys = buildList {
+            if (hasFavs) add(FAV)
+            add(null)
+            addAll(groups)
+        }
+        val lg = liveGroup
+        if (lg !in sideKeys) liveGroup = null
+        sideAdapter.submit(
+            sideKeys.map { k -> when (k) { FAV -> "★ Favoritos"; null -> "Todos"; else -> k } },
+            sideKeys.indexOf(liveGroup).coerceAtLeast(0),
+        )
+    }
+
+    private fun onSide(pos: Int) {
+        liveGroup = sideKeys.getOrNull(pos)
+        refresh(scrollTop = true)
+    }
+
+    private fun toggleFavorite(pos: Int) {
+        val ch = channelAdapter.items.getOrNull(pos) ?: return
+        if (!favorites.remove(ch.url)) {
+            favorites += ch.url
+            toast("★ ${ch.name} añadido a favoritos")
+        } else {
+            toast("${ch.name} quitado de favoritos")
+        }
+        prefs.edit { putStringSet("favs", HashSet(favorites)) }
+        renderSide()
+        refresh()
     }
 
     /** Lo que se dejó a medias, de lo más reciente a lo más antiguo. */
@@ -245,9 +295,15 @@ class MainActivity : AppCompatActivity() {
         filterJob = lifecycleScope.launch {
             if (t == Tab.LIVE) {
                 val src = Catalog.live
+                val favs = HashSet(favorites)
                 val res = withContext(Dispatchers.Default) {
-                    if (g == null && q.isEmpty()) src
-                    else src.filter { (g == null || it.group == g) && (q.isEmpty() || it.key.contains(q)) }
+                    val inGroup = when (g) {
+                        FAV -> src.filter { it.url in favs }
+                        // En "Todos", los favoritos primero
+                        null -> if (favs.isEmpty()) src else src.filter { it.url in favs } + src.filter { it.url !in favs }
+                        else -> src.filter { it.group == g }
+                    }
+                    if (q.isEmpty()) inGroup else inGroup.filter { it.key.contains(q) }
                 }
                 useAdapter(channelAdapter)
                 channelAdapter.submit(res)
@@ -257,7 +313,8 @@ class MainActivity : AppCompatActivity() {
                 if (q.isEmpty() && f == VodFilter.Home) {
                     val genres = if (shows) Catalog.showGenres else Catalog.movieGenres
                     val resume = resumeItems(shows)
-                    val rows = withContext(Dispatchers.Default) { Home.rows(src, resume, genres) }
+                    val watch = if (shows) Catalog.watchShows else Catalog.watchMovies
+                    val rows = withContext(Dispatchers.Default) { Home.rows(src, resume, genres, watch) }
                     useAdapter(rowsAdapter)
                     rowsAdapter.submit(rows)
                 } else {
@@ -488,12 +545,37 @@ class MainActivity : AppCompatActivity() {
         val version = runCatching { Updater.versionName(this) }.getOrDefault("")
         MaterialAlertDialogBuilder(this)
             .setTitle("Ajustes")
-            .setItems(arrayOf("Lista IPTV\n$iptv", "Plex\n$plex", "Actualizar app\nVersión $version")) { _, which ->
+            .setItems(
+                arrayOf(
+                    "Lista IPTV\n$iptv",
+                    "Plex\n$plex",
+                    "Audio por defecto\n${Languages.audioLabel(this)}",
+                    "Subtítulos por defecto\n${Languages.subsLabel(this)}",
+                    "Actualizar app\nVersión $version",
+                )
+            ) { _, which ->
                 when (which) {
                     0 -> showAddDialog()
                     1 -> if (Plex.loggedIn) showPlexMenu() else plexLogin()
+                    2 -> pickLanguage(audio = true)
+                    3 -> pickLanguage(audio = false)
                     else -> checkUpdate(manual = true)
                 }
+            }
+            .show()
+    }
+
+    private fun pickLanguage(audio: Boolean) {
+        val none = if (audio) "El del dispositivo" else "Desactivados"
+        val codes = listOf("") + Languages.options.map { it.first }
+        val names = listOf(none) + Languages.options.map { it.second }
+        val current = if (audio) Languages.audio(this) else Languages.subs(this)
+        MaterialAlertDialogBuilder(this)
+            .setTitle(if (audio) "Audio por defecto" else "Subtítulos por defecto")
+            .setSingleChoiceItems(names.toTypedArray(), codes.indexOf(current).coerceAtLeast(0)) { d, which ->
+                if (audio) Languages.setAudio(this, codes[which]) else Languages.setSubs(this, codes[which])
+                toast((if (audio) "Audio: " else "Subtítulos: ") + names[which])
+                d.dismiss()
             }
             .show()
     }
@@ -690,6 +772,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val KEY_SRC = "src"
+        private const val FAV = "\u0000favoritos"
         private const val STALE = 12 * 60 * 60 * 1000L
         private val URL_RE = Regex("""https?://\S+""")
     }

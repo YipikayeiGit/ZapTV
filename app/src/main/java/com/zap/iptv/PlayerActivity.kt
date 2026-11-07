@@ -28,7 +28,6 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
-import java.util.Locale
 import kotlin.math.abs
 
 @OptIn(UnstableApi::class)
@@ -81,9 +80,16 @@ class PlayerActivity : AppCompatActivity() {
         player = ExoPlayer.Builder(this, renderers)
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http)))
             .build()
-        // Audio en el idioma del dispositivo si existe
+        // Idiomas elegidos en Ajustes (si el vídeo los tiene)
+        val subLang = Languages.subs(this)
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-            .setPreferredAudioLanguage(Locale.getDefault().language)
+            .setPreferredAudioLanguage(Languages.audioOrDevice(this))
+            .apply {
+                if (subLang.isNotEmpty()) {
+                    setPreferredTextLanguage(subLang)
+                    setSelectUndeterminedTextLanguage(false)
+                }
+            }
             .build()
 
         player.addListener(object : Player.Listener {

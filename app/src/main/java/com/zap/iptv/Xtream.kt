@@ -128,6 +128,30 @@ object Xtream {
         return IptvData(live, movies, shows)
     }
 
+    /** Ficha de una película del proveedor (director, reparto…). */
+    fun vodInfo(acc: Account, streamId: String): Info? {
+        val j = JSONObject(Http.get(acc.api("get_vod_info", "&vod_id=$streamId"), timeout = 20_000))
+        val i = j.optJSONObject("info") ?: return null
+        fun list(vararg names: String): List<String> = names.firstNotNullOfOrNull { i.str(it) }
+            ?.split(',', '/')?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+        val secs = i.optLong("duration_secs").takeIf { it > 0 }
+            ?: i.str("duration")?.split(':')?.mapNotNull { it.trim().toLongOrNull() }
+                ?.takeIf { it.size == 3 }?.let { it[0] * 3600 + it[1] * 60 + it[2] }
+        return Info(
+            plot = i.str("plot") ?: i.str("description"),
+            minutes = secs?.let { (it / 60).toInt() }?.takeIf { it > 0 },
+            contentRating = i.str("mpaa_rating") ?: i.str("age"),
+            rating = i.str("rating")?.replace(',', '.')?.toFloatOrNull()?.takeIf { it in 0.1f..10f },
+            directors = list("director"),
+            cast = list("cast", "actors").take(20).map { Person(it, null, null) },
+            genres = list("genre"),
+        )
+    }
+
+    /** El id de una peli Xtream sale de su enlace: …/movie/usuario/clave/ID.ext */
+    fun movieId(url: String): String? =
+        url.takeIf { "/movie/" in it }?.substringAfterLast('/')?.substringBefore('.')?.takeIf { it.isNotEmpty() }
+
     fun episodes(acc: Account, seriesId: String): List<Episode> {
         val j = JSONObject(Http.get(acc.api("get_series_info", "&series_id=$seriesId"), timeout = 30_000))
         val out = ArrayList<Episode>()

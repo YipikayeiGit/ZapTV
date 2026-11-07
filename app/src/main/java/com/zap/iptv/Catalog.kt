@@ -13,9 +13,14 @@ data class SourceRef(
     val url: String? = null,
     val plexServer: String? = null,
     val plexKey: String? = null,
+    /** Identificador global de Plex (plex://movie/…), para cruzar con Mi lista. */
+    val plexGuid: String? = null,
 )
 
-data class PlexRef(val server: String, val key: String)
+data class PlexRef(val server: String, val key: String, val guid: String? = null)
+
+/** Un título de "Mi lista" de Plex (puede no estar en ningún servidor). */
+data class WatchItem(val guid: String?, val title: String, val year: Int?, val type: String)
 
 interface CatalogItem {
     val title: String
@@ -87,7 +92,12 @@ data class IptvData(val live: List<Channel>, val movies: List<Movie>, val shows:
 
 data class PlexServer(val id: String, val name: String, val uri: String, val token: String)
 
-data class PlexData(val servers: List<PlexServer>, val movies: List<Movie>, val shows: List<Show>) {
+data class PlexData(
+    val servers: List<PlexServer>,
+    val movies: List<Movie>,
+    val shows: List<Show>,
+    val watchlist: List<WatchItem> = emptyList(),
+) {
     companion object {
         val EMPTY = PlexData(emptyList(), emptyList(), emptyList())
     }
@@ -103,6 +113,8 @@ object Catalog {
     @Volatile var shows: List<Show> = emptyList()
     @Volatile var movieGenres: List<String> = emptyList()
     @Volatile var showGenres: List<String> = emptyList()
+    @Volatile var watchMovies: List<CatalogItem> = emptyList()
+    @Volatile var watchShows: List<CatalogItem> = emptyList()
 
     fun rebuild() {
         val i = iptv
@@ -112,10 +124,52 @@ object Catalog {
         val s = Merge.shows(p.shows + i.shows)
         movieGenres = Home.genres(m)
         showGenres = Home.genres(s)
+        val watch = p.watchlist
+        watchMovies = matchWatch(m, watch.filter { it.type != "show" }) { mv -> mv.sources.mapNotNull { it.plexGuid } }
+        watchShows = matchWatch(s, watch.filter { it.type == "show" }) { sh -> sh.plex.mapNotNull { it.guid } }
         movies = m
         shows = s
     }
 }
+
+/** Busca en el catálogo los títulos de Mi lista (por identificador de Plex o por título y año). */
+private fun <T : CatalogItem> matchWatch(
+    items: List<T>,
+    watch: List<WatchItem>,
+    guidsOf: (T) -> List<String>,
+): List<CatalogItem> {
+    if (watch.isEmpty()) return emptyList()
+    val byGuid = HashMap<String, T>()
+    val byKey = HashMap<String, MutableList<T>>()
+    for (i in items) {
+        for (g in guidsOf(i)) byGuid[g] = i
+        byKey.getOrPut(i.key) { ArrayList(1) } += i
+    }
+    return watch.mapNotNull { w ->
+        w.guid?.let { byGuid[it] } ?: byKey[Titles.key(w.title)]?.firstOrNull { c ->
+            val cy = c.year
+            w.year == null || cy == null || abs(cy - w.year) <= 1
+        }
+    }.distinct()
+}
+
+/** Ficha ampliada de una película (de Plex o del proveedor IPTV). */
+data class Person(val name: String, val role: String?, val photo: String?)
+
+data class Info(
+    val tagline: String? = null,
+    val plot: String? = null,
+    val minutes: Int? = null,
+    val contentRating: String? = null,
+    val studio: String? = null,
+    val rating: Float? = null,
+    val directors: List<String> = emptyList(),
+    val writers: List<String> = emptyList(),
+    val cast: List<Person> = emptyList(),
+    val genres: List<String> = emptyList(),
+    /** Títulos que Plex considera parecidos. */
+    val similar: List<String> = emptyList(),
+)
 
 /** Lo que se va a reproducir (compartido con el reproductor). */
 data class Sub(val url: String, val lang: String?, val label: String?, val mime: String)
@@ -284,9 +338,15 @@ object Home {
         return items.filter { k in it.genreKeys }.sortedByDescending { it.added }
     }
 
-    fun rows(items: List<CatalogItem>, resume: List<CatalogItem>, genres: List<String>): List<Row> {
+    fun rows(
+        items: List<CatalogItem>,
+        resume: List<CatalogItem>,
+        genres: List<String>,
+        watch: List<CatalogItem> = emptyList(),
+    ): List<Row> {
         val out = ArrayList<Row>()
         if (resume.isNotEmpty()) out += Row("Seguir viendo", resume)
+        if (watch.isNotEmpty()) out += Row("Mi lista de Plex", watch)
 
         val recent = items.filter { it.added > 0 }.sortedByDescending { it.added }.take(40)
         if (recent.isNotEmpty()) out += Row("Novedades", recent)

@@ -53,4 +53,14 @@
         android:maxLines="1"
         android:textColor="@color/text"
         android:textSize="16sp" />
+
+    <TextView
+        android:id="@+id/fav"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:text="★"
+        android:textColor="@color/accent"
+        android:textSize="18sp"
+        android:visibility="gone" />
 </LinearLayout>

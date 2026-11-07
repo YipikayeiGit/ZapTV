@@ -11,8 +11,18 @@ import androidx.recyclerview.widget.RecyclerView
 import coil.dispose
 import coil.load
 
-class ChannelAdapter(private val onClick: (Int) -> Unit) :
-    RecyclerView.Adapter<ChannelAdapter.VH>() {
+class ChannelAdapter(
+    private val isFav: (Channel) -> Boolean = { false },
+    private val onLong: (Int) -> Unit = {},
+    private val onClick: (Int) -> Unit,
+) : RecyclerView.Adapter<ChannelAdapter.VH>() {
+
+    init {
+        // Ids estables: al reordenar (favoritos) el foco del mando no salta
+        setHasStableIds(true)
+    }
+
+    override fun getItemId(position: Int): Long = items[position].url.hashCode().toLong()
 
     var items: List<Channel> = emptyList()
         private set
@@ -28,12 +38,19 @@ class ChannelAdapter(private val onClick: (Int) -> Unit) :
         val name: TextView = v.findViewById(R.id.name)
         val initial: TextView = v.findViewById(R.id.initial)
         val logo: ImageView = v.findViewById(R.id.logo)
+        val fav: TextView = v.findViewById(R.id.fav)
 
         init {
             v.findViewById<View>(R.id.logoBox).clipToOutline = true
             v.setOnClickListener {
                 val p = bindingAdapterPosition
                 if (p != RecyclerView.NO_POSITION) onClick(p)
+            }
+            // Mantener pulsado OK: añadir o quitar de favoritos
+            v.setOnLongClickListener {
+                val p = bindingAdapterPosition
+                if (p != RecyclerView.NO_POSITION) onLong(p)
+                true
             }
         }
     }
@@ -45,6 +62,7 @@ class ChannelAdapter(private val onClick: (Int) -> Unit) :
         val ch = items[position]
         h.num.text = (position + 1).toString()
         h.name.text = ch.name
+        h.fav.visibility = if (isFav(ch)) View.VISIBLE else View.GONE
         h.initial.text = ch.name.firstOrNull()?.uppercase() ?: ""
         h.initial.visibility = View.VISIBLE
         if (ch.logo != null) {
@@ -62,9 +80,11 @@ class ChannelAdapter(private val onClick: (Int) -> Unit) :
     override fun getItemCount() = items.size
 }
 
-/** Fila de "pastillas" (grupos, filtros, temporadas). */
-class ChipAdapter(private val onPick: (Int) -> Unit) :
-    RecyclerView.Adapter<ChipAdapter.VH>() {
+/** Lista de opciones seleccionables (pastillas, temporadas o el panel de categorías). */
+class ChipAdapter(
+    private val layout: Int = R.layout.item_group,
+    private val onPick: (Int) -> Unit,
+) : RecyclerView.Adapter<ChipAdapter.VH>() {
 
     private var labels: List<String> = emptyList()
     var selected = 0
@@ -81,7 +101,7 @@ class ChipAdapter(private val onPick: (Int) -> Unit) :
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val tv = LayoutInflater.from(parent.context)
-            .inflate(R.layout.item_group, parent, false) as TextView
+            .inflate(layout, parent, false) as TextView
         val vh = VH(tv)
         tv.setOnClickListener {
             val p = vh.bindingAdapterPosition
@@ -254,4 +274,43 @@ class RowsAdapter(private val onClick: (CatalogItem) -> Unit) :
     }
 
     override fun getItemCount() = rows.size
+}
+
+/** Reparto: foto redonda, nombre y personaje. */
+class CastAdapter(private val people: List<Person>) : RecyclerView.Adapter<CastAdapter.VH>() {
+
+    inner class VH(v: View) : RecyclerView.ViewHolder(v) {
+        val photo: ImageView = v.findViewById(R.id.photo)
+        val initials: TextView = v.findViewById(R.id.initials)
+        val name: TextView = v.findViewById(R.id.name)
+        val role: TextView = v.findViewById(R.id.role)
+
+        init {
+            v.findViewById<View>(R.id.photoBox).clipToOutline = true
+        }
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
+        VH(LayoutInflater.from(parent.context).inflate(R.layout.item_cast, parent, false))
+
+    override fun onBindViewHolder(h: VH, position: Int) {
+        val p = people[position]
+        h.name.text = p.name
+        h.role.text = p.role ?: ""
+        h.initials.text = p.name.split(' ').filter { it.isNotEmpty() }.take(2)
+            .joinToString("") { it.first().uppercase() }
+        h.initials.visibility = View.VISIBLE
+        if (p.photo != null) {
+            h.photo.load(p.photo) {
+                crossfade(false)
+                size(200)
+                listener(onSuccess = { _, _ -> h.initials.visibility = View.INVISIBLE })
+            }
+        } else {
+            h.photo.dispose()
+            h.photo.setImageDrawable(null)
+        }
+    }
+
+    override fun getItemCount() = people.size
 }
