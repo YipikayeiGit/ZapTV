@@ -24,6 +24,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
@@ -47,7 +48,6 @@ class PlayerActivity : AppCompatActivity() {
     private var triedHls = false
 
     private var item: PlayItem? = null
-    private var usingFallback = false
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -74,7 +74,11 @@ class PlayerActivity : AppCompatActivity() {
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(15_000)
             .setReadTimeoutMs(20_000)
-        player = ExoPlayer.Builder(this)
+        // Si el Fire TV no sabe decodificar un audio (DTS, TrueHD…), lo hace FFmpeg en la app
+        val renderers = DefaultRenderersFactory(this)
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+            .setEnableDecoderFallback(true)
+        player = ExoPlayer.Builder(this, renderers)
             .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(this, http)))
             .build()
         // Audio en el idioma del dispositivo si existe
@@ -195,15 +199,23 @@ class PlayerActivity : AppCompatActivity() {
             else showLabel("No se puede reproducir · ${channels[index].name}", sticky = true)
             return
         }
-        val it = item ?: return
-        if (!usingFallback && it.fallbackUrl != null) {
-            // El dispositivo no puede con el archivo original: pedir a Plex que lo convierta
-            usingFallback = true
-            showLabel("Convirtiendo en Plex…")
-            playVod(it.fallbackUrl, player.currentPosition.coerceAtLeast(savedPosition(it)))
-            return
+        // Sin plan B de conversión: se reproduce siempre el archivo original
+        val reason = when (error.errorCode) {
+            PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+            PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
+            PlaybackException.ERROR_CODE_DECODING_FAILED,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+            PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ->
+                "Este dispositivo no puede reproducir el formato original de este archivo"
+            PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
+                "El servidor ha rechazado la reproducción (¿hace falta pase remoto de Plex?)"
+            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+            PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ->
+                "No se puede conectar con el servidor"
+            else -> "No se puede reproducir (${error.errorCodeName})"
         }
-        showLabel("No se puede reproducir (${error.errorCodeName})", sticky = true)
+        showLabel(reason, sticky = true)
     }
 
     private fun showLabel(text: String, sticky: Boolean = false) {

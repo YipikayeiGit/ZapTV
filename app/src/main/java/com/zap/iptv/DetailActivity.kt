@@ -173,7 +173,7 @@ class DetailActivity : AppCompatActivity() {
                         PlayItem(title, src.url!!, resumeKey = resumeKey)
                     } else {
                         val d = plexDetails[src.plexKey!!] ?: Plex.details(src.plexServer!!, src.plexKey!!)
-                        PlayItem(title, d.url, d.subs, d.fallback, resumeKey)
+                        PlayItem(title, d.url, d.subs, resumeKey = resumeKey)
                     }
                 }
             } catch (e: CancellationException) {

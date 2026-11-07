@@ -365,7 +365,8 @@ object Plex {
 
     // ---------- Reproducción ----------
 
-    data class Details(val label: String, val url: String, val subs: List<Sub>, val fallback: String)
+    /** Siempre el archivo original (Direct Play): Plex nunca convierte el vídeo. */
+    data class Details(val label: String, val url: String, val subs: List<Sub>)
 
     /** Pide a Plex el archivo, idiomas y subtítulos de una peli o episodio. */
     fun details(serverId: String, key: String): Details {
@@ -407,30 +408,11 @@ object Plex {
             subLangs.takeIf { it.isNotEmpty() }?.let { "Subs " + it.joinToString("/") },
         ).joinToString(" · ")
 
-        return Details(label, withToken("${s.uri}$partKey", s.token), subs, transcode(s, key))
+        return Details(label, withToken("${s.uri}$partKey", s.token), subs)
     }
 
     private fun withToken(url: String, token: String) =
         url + (if ('?' in url) "&" else "?") + "X-Plex-Token=$token"
-
-    /** Plan B si el dispositivo no puede reproducir el archivo original. */
-    private fun transcode(s: PlexServer, key: String): String {
-        val p = linkedMapOf(
-            "path" to "/library/metadata/$key",
-            "mediaIndex" to "0", "partIndex" to "0",
-            "protocol" to "hls", "fastSeek" to "1",
-            "directPlay" to "0", "directStream" to "1", "directStreamAudio" to "1",
-            "videoQuality" to "100", "maxVideoBitrate" to "20000",
-            "subtitles" to "auto", "location" to "wan",
-            "session" to UUID.randomUUID().toString(),
-            "X-Plex-Client-Identifier" to clientId,
-            "X-Plex-Product" to PRODUCT,
-            "X-Plex-Platform" to "Chrome",
-            "X-Plex-Token" to s.token,
-        )
-        return "${s.uri}/video/:/transcode/universal/start.m3u8?" +
-            p.entries.joinToString("&") { (k, v) -> "$k=${URLEncoder.encode(v, "UTF-8")}" }
-    }
 
     private fun lang3(code: String): String = when (code.lowercase()) {
         "spa" -> "ES"; "eng" -> "EN"; "fre", "fra" -> "FR"; "ger", "deu" -> "DE"; "ita" -> "IT"

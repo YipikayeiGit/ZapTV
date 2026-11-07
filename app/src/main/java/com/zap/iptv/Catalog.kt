@@ -124,7 +124,6 @@ data class PlayItem(
     val title: String,
     val url: String,
     val subtitles: List<Sub> = emptyList(),
-    val fallbackUrl: String? = null,
     val resumeKey: String? = null,
 )
 
