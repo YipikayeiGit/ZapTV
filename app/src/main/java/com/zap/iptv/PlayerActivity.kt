@@ -105,6 +105,13 @@ class PlayerActivity : AppCompatActivity() {
             }
         })
         playerView.player = player
+        // Audio y subtítulos: ventana grande y clara en lugar de los menús pequeños de abajo
+        playerView.findViewById<View>(androidx.media3.ui.R.id.exo_subtitle)?.setOnClickListener {
+            TrackDialog.show(this, player, C.TRACK_TYPE_TEXT)
+        }
+        playerView.findViewById<View>(androidx.media3.ui.R.id.exo_settings)?.setOnClickListener {
+            TrackDialog.show(this, player, C.TRACK_TYPE_AUDIO)
+        }
         // El reproductor recibe las teclas del mando (OK, flechas, play/pausa)
         playerView.isFocusable = true
         playerView.requestFocus()
@@ -263,6 +270,55 @@ class PlayerActivity : AppCompatActivity() {
         showLabel(reason, sticky = true)
     }
 
+    // ---------- Avanzar / retroceder con el mando ----------
+
+    private var seekDir = 0
+    private var seekCount = 0
+    private var seekOffset = 0L
+    private val seekCommit = Runnable { commitSeek() }
+
+    /** Cada pulsación suma; cuantas más seguidas, mayor el salto: 30 s, 1 min, 2 min, 5 min. */
+    private fun seekStep(dir: Int) {
+        if (dir != seekDir && seekOffset != 0L) commitSeek()
+        seekDir = dir
+        seekCount++
+        val step = when {
+            seekCount <= 3 -> 30_000L
+            seekCount <= 6 -> 60_000L
+            seekCount <= 9 -> 120_000L
+            else -> 300_000L
+        }
+        seekOffset += dir * step
+        val target = seekTarget()
+        val sign = if (seekOffset >= 0) "⏩  +" else "⏪  −"
+        showLabel("$sign${clock(abs(seekOffset))}   →   ${clock(target)}")
+        handler.removeCallbacks(seekCommit)
+        handler.postDelayed(seekCommit, 700)
+    }
+
+    private fun seekTarget(): Long {
+        val dur = player.duration
+        var t = (player.currentPosition + seekOffset).coerceAtLeast(0L)
+        if (dur != C.TIME_UNSET && dur > 0) t = t.coerceAtMost(dur - 1_000L)
+        return t
+    }
+
+    private fun commitSeek() {
+        handler.removeCallbacks(seekCommit)
+        if (seekOffset != 0L) player.seekTo(seekTarget())
+        seekOffset = 0L
+        seekCount = 0
+        seekDir = 0
+    }
+
+    private fun clock(ms: Long): String {
+        val total = ms / 1000
+        val h = total / 3600
+        val m = (total % 3600) / 60
+        val sec = total % 60
+        return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
+    }
+
     private fun showLabel(text: String, sticky: Boolean = false) {
         label.text = text
         label.animate().cancel()
@@ -279,6 +335,18 @@ class PlayerActivity : AppCompatActivity() {
         ) {
             if (event.action == KeyEvent.ACTION_UP) playerView.hideController()
             return true
+        }
+        if (!live && ::playerView.isInitialized && event.action == KeyEvent.ACTION_DOWN &&
+            !playerView.isControllerFullyVisible
+        ) {
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
+                    seekStep(+1); return true
+                }
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> {
+                    seekStep(-1); return true
+                }
+            }
         }
         if (live && ::playerView.isInitialized && event.action == KeyEvent.ACTION_DOWN &&
             !playerView.isControllerFullyVisible
