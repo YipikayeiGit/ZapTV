@@ -694,6 +694,7 @@ class MainActivity : AppCompatActivity() {
                     "Plex\n$plex",
                     "Audio por defecto\n${Languages.audioLabel(this)}",
                     "Subtítulos por defecto\n${Languages.subsLabel(this)}",
+                    "Formato de subtítulos\n${SubStyle.summary(this)}",
                     "Actualizar app\nVersión $version",
                 )
             ) { _, which ->
@@ -702,9 +703,31 @@ class MainActivity : AppCompatActivity() {
                     1 -> if (Plex.loggedIn) showPlexMenu() else plexLogin()
                     2 -> pickLanguage(audio = true)
                     3 -> pickLanguage(audio = false)
+                    4 -> showSubStyle()
                     else -> checkUpdate(manual = true)
                 }
             }
+            .show()
+    }
+
+    /** Menú del formato de subtítulos: cada opción abre su lista y vuelve aquí. */
+    private fun showSubStyle() {
+        val items = SubStyle.ALL.map { "${it.title}\n${SubStyle.label(this, it)}" }.toTypedArray()
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Formato de subtítulos")
+            .setItems(items) { _, which ->
+                val o = SubStyle.ALL[which]
+                MaterialAlertDialogBuilder(this)
+                    .setTitle(o.title)
+                    .setSingleChoiceItems(o.values.toTypedArray(), SubStyle.get(this, o)) { d, v ->
+                        SubStyle.set(this, o, v)
+                        d.dismiss()
+                        showSubStyle()
+                    }
+                    .setNegativeButton("Atrás") { _, _ -> showSubStyle() }
+                    .show()
+            }
+            .setPositiveButton("Listo", null)
             .show()
     }
 

@@ -11,8 +11,9 @@
         android:allowBackup="true"
         android:largeHeap="true"
         android:banner="@drawable/banner"
-        android:icon="@drawable/ic_launcher"
-        android:label="Zap"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:label="Zap TV"
         android:supportsRtl="true"
         android:theme="@style/Theme.Zap"
         android:usesCleartextTraffic="true">

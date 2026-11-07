@@ -108,6 +108,8 @@ class PlayerActivity : AppCompatActivity() {
             }
         })
         playerView.player = player
+        // Formato de subtítulos elegido en Ajustes
+        playerView.subtitleView?.let { SubStyle.apply(this, it) }
         // Audio y subtítulos: ventana grande y clara en lugar de los menús pequeños de abajo
         playerView.findViewById<View>(androidx.media3.ui.R.id.exo_subtitle)?.setOnClickListener {
             TrackDialog.show(this, player, C.TRACK_TYPE_TEXT)
@@ -343,37 +345,55 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     // Mandos de TV / Android TV
+    /** Teclas cuya pulsación ya gestionamos: su "soltar" no debe llegar al reproductor. */
+    private val swallowed = HashSet<Int>()
+
+    /**
+     * Con los controles ocultos:
+     *  - Pelis/series: ← → avanzan/retroceden, ↑ ↓ no hacen nada, OK pausa y muestra el menú.
+     *  - Directo: ↑ ↓ (y CH+/CH−) cambian de canal.
+     * Con el menú visible, las flechas se mueven por sus botones.
+     */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (!::playerView.isInitialized) return super.dispatchKeyEvent(event)
+        val code = event.keyCode
+        if (event.action == KeyEvent.ACTION_UP && swallowed.remove(code)) return true
+
         // Atrás con los controles visibles: solo ocultarlos
-        if (event.keyCode == KeyEvent.KEYCODE_BACK && ::playerView.isInitialized &&
-            playerView.isControllerFullyVisible
-        ) {
+        if (code == KeyEvent.KEYCODE_BACK && playerView.isControllerFullyVisible) {
             if (event.action == KeyEvent.ACTION_UP) playerView.hideController()
             return true
         }
-        if (!live && ::playerView.isInitialized && event.action == KeyEvent.ACTION_DOWN &&
-            !playerView.isControllerFullyVisible
-        ) {
-            when (event.keyCode) {
-                KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> {
-                    seekStep(+1); return true
+        if (event.action != KeyEvent.ACTION_DOWN || playerView.isControllerFullyVisible) {
+            return super.dispatchKeyEvent(event)
+        }
+
+        val handled = if (!live) {
+            when (code) {
+                KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { seekStep(+1); true }
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> { seekStep(-1); true }
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> true
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
+                    if (event.repeatCount == 0) {
+                        commitSeek()
+                        player.pause()
+                        playerView.showController()
+                    }
+                    true
                 }
-                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> {
-                    seekStep(-1); return true
-                }
+                else -> false
+            }
+        } else {
+            when (code) {
+                KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CHANNEL_UP -> { playChannel(index + 1); true }
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_CHANNEL_DOWN -> { playChannel(index - 1); true }
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> true
+                else -> false
             }
         }
-        if (live && ::playerView.isInitialized && event.action == KeyEvent.ACTION_DOWN &&
-            !playerView.isControllerFullyVisible
-        ) {
-            when (event.keyCode) {
-                KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CHANNEL_UP -> {
-                    playChannel(index + 1); return true
-                }
-                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_CHANNEL_DOWN -> {
-                    playChannel(index - 1); return true
-                }
-            }
+        if (handled) {
+            swallowed += code
+            return true
         }
         return super.dispatchKeyEvent(event)
     }
