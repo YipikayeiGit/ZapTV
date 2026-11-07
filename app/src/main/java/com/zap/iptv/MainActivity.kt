@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.EditText
@@ -87,6 +88,9 @@ class MainActivity : AppCompatActivity() {
 
         chips.layoutManager = LinearLayoutManager(this, RecyclerView.HORIZONTAL, false)
         chips.adapter = chipAdapter
+        // Con el mando, el foco va a los elementos y no a la lista vacía
+        chips.isFocusable = false
+        content.isFocusable = false
         content.setHasFixedSize(true)
         content.setItemViewCacheSize(24)
 
@@ -217,6 +221,20 @@ class MainActivity : AppCompatActivity() {
             tab == Tab.LIVE -> "Añade una lista IPTV para ver canales"
             else -> "Añade una lista IPTV o conecta Plex"
         }
+        // Si el foco se ha quedado en algo que ya no se ve, llevarlo al botón
+        if (emptyAdd.isShown) {
+            val f = currentFocus
+            if (f == null || !f.isShown || f === content) emptyAdd.requestFocus()
+        }
+    }
+
+    // Botón ☰ (menú) del mando: abrir las fuentes
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_MENU) {
+            showSources()
+            return true
+        }
+        return super.onKeyUp(keyCode, event)
     }
 
     private fun rebuild() {

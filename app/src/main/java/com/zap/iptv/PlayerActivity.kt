@@ -86,6 +86,9 @@ class PlayerActivity : AppCompatActivity() {
             override fun onPlayerError(error: PlaybackException) = handleError(error)
         })
         playerView.player = player
+        // El reproductor recibe las teclas del mando (OK, flechas, play/pausa)
+        playerView.isFocusable = true
+        playerView.requestFocus()
 
         if (live) setupLive() else startVod()
     }
@@ -211,6 +214,13 @@ class PlayerActivity : AppCompatActivity() {
 
     // Mandos de TV / Android TV
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // Atrás con los controles visibles: solo ocultarlos
+        if (event.keyCode == KeyEvent.KEYCODE_BACK && ::playerView.isInitialized &&
+            playerView.isControllerFullyVisible
+        ) {
+            if (event.action == KeyEvent.ACTION_UP) playerView.hideController()
+            return true
+        }
         if (live && ::playerView.isInitialized && event.action == KeyEvent.ACTION_DOWN &&
             !playerView.isControllerFullyVisible
         ) {

@@ -105,6 +105,8 @@ class DetailActivity : AppCompatActivity() {
     // ---------- Serie: temporadas y capítulos de todas las fuentes ----------
 
     private fun showSeries(s: Show) {
+        seasonsView.isFocusable = false
+        episodesView.isFocusable = false
         seasonsView.layoutManager = LinearLayoutManager(this, RecyclerView.HORIZONTAL, false)
         seasonsView.adapter = seasonAdapter
         episodesView.layoutManager = LinearLayoutManager(this)
