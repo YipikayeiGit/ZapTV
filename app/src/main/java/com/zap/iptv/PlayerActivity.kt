@@ -100,6 +100,16 @@ class PlayerActivity : AppCompatActivity() {
         player.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) = handleError(error)
 
+            override fun onPlaybackStateChanged(state: Int) {
+                // Se ha parado mucho antes del final: casi siempre es un formato que el dispositivo no puede con él
+                if (!live && state == Player.STATE_ENDED) {
+                    val dur = player.duration
+                    if (dur != C.TIME_UNSET && dur > 60_000 && player.currentPosition < dur - 60_000) {
+                        showLabel("La reproducción se ha detenido antes de tiempo.\n${techInfo()}", sticky = true)
+                    }
+                }
+            }
+
             override fun onTracksChanged(tracks: Tracks) {
                 if (!live && !tracksApplied && !tracks.groups.isEmpty()) {
                     tracksApplied = true
@@ -288,7 +298,7 @@ class PlayerActivity : AppCompatActivity() {
                 "No se puede conectar con el servidor"
             else -> "No se puede reproducir (${error.errorCodeName})"
         }
-        showLabel(reason, sticky = true)
+        showLabel("$reason\n${techInfo()}", sticky = true)
     }
 
     // ---------- Avanzar / retroceder con el mando ----------
@@ -338,6 +348,16 @@ class PlayerActivity : AppCompatActivity() {
         val m = (total % 3600) / 60
         val sec = total % 60
         return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
+    }
+
+    /** Formato del vídeo y del audio, para saber por qué falla algo. */
+    private fun techInfo(): String {
+        val v = player.videoFormat
+        val a = player.audioFormat
+        val video = v?.let { listOfNotNull(it.sampleMimeType, it.codecs, if (it.width > 0) "${it.width}x${it.height}" else null).joinToString(" ") }
+        val audio = a?.let { listOfNotNull(it.sampleMimeType, it.codecs, it.language).joinToString(" ") }
+        return listOfNotNull(video?.let { "Vídeo: $it" }, audio?.let { "Audio: $it" }).joinToString(" · ")
+            .ifEmpty { "Sin información del formato" }
     }
 
     private fun showLabel(text: String, sticky: Boolean = false) {

@@ -108,7 +108,7 @@ class DetailActivity : AppCompatActivity() {
     private fun showMovie(m: Movie) {
         // Plex primero: suele tener mejor calidad
         val sources = m.sources.sortedBy { it.origin.ordinal }
-        val buttons = sources.map { src -> addSourceButton(src.label) { play(m.title, src, "movie:${m.key}") } }
+        val buttons = sources.map { src -> addSourceButton(src.label) { play(m.title, src, "movie:${m.key}", sources) } }
         if (sources.isEmpty()) {
             findViewById<TextView>(R.id.credits).apply {
                 text = "No está en tus fuentes (Plex o IPTV)"
@@ -367,7 +367,7 @@ class DetailActivity : AppCompatActivity() {
         val sources = ep.sources.sortedBy { it.origin.ordinal }
         val start = { src: SourceRef ->
             Episodes.markWatched(this, item, ep, Episodes.maxCode(episodes))
-            play(title, src, key)
+            play(title, src, key, sources)
         }
         if (sources.size == 1) {
             start(sources[0])
@@ -436,10 +436,10 @@ class DetailActivity : AppCompatActivity() {
     // ---------- Reproducir ----------
 
     /** Si ya lo empezaste: continuar o empezar desde el principio. */
-    private fun play(title: String, src: SourceRef, resumeKey: String) {
+    private fun play(title: String, src: SourceRef, resumeKey: String, others: List<SourceRef> = emptyList()) {
         val saved = getSharedPreferences("resume", MODE_PRIVATE).getLong(resumeKey, 0L)
         if (saved <= 0L) {
-            startPlayback(title, src, resumeKey, fromStart = false)
+            startPlayback(title, src, resumeKey, fromStart = false, others = others)
             return
         }
         val m = saved / 60_000
@@ -447,7 +447,7 @@ class DetailActivity : AppCompatActivity() {
         MaterialAlertDialogBuilder(this)
             .setTitle(title)
             .setItems(arrayOf("▶  Continuar ($time)", "⟲  Empezar desde el principio")) { _, which ->
-                startPlayback(title, src, resumeKey, fromStart = which == 1)
+                startPlayback(title, src, resumeKey, fromStart = which == 1, others = others)
             }
             .show()
     }
@@ -462,13 +462,20 @@ class DetailActivity : AppCompatActivity() {
         if (::item.isInitialized && item is Show) episodeAdapter.refreshMarks()
     }
 
-    private fun startPlayback(title: String, src: SourceRef, resumeKey: String, fromStart: Boolean) {
+    private fun startPlayback(
+        title: String,
+        src: SourceRef,
+        resumeKey: String,
+        fromStart: Boolean,
+        others: List<SourceRef> = emptyList(),
+    ) {
         if (starting) return
         starting = true
         val view = LayoutInflater.from(this).inflate(R.layout.dialog_loading, null)
         view.findViewById<TextView>(R.id.text).text = "Cargando $title…"
         val loading = MaterialAlertDialogBuilder(this).setView(view).setCancelable(false).show()
         lifecycleScope.launch {
+            var problem: String? = null
             val playItem = try {
                 withContext(Dispatchers.IO) {
                     if (src.origin == Origin.IPTV) {
@@ -477,6 +484,7 @@ class DetailActivity : AppCompatActivity() {
                         // Comprobar que el servidor responde (o buscar su dirección nueva) antes de abrir
                         Plex.ensure(src.plexServer!!) ?: throw IOException("el servidor de Plex no responde ahora")
                         val d = Plex.details(src.plexServer!!, src.plexKey!!)
+                        problem = Codecs.problem(d.videoCodec, d.videoProfile, d.bitDepth)
                         PlayItem(
                             title, d.url, d.subs, resumeKey = resumeKey, fromStart = fromStart,
                             plexServer = src.plexServer, plexKey = src.plexKey,
@@ -498,11 +506,36 @@ class DetailActivity : AppCompatActivity() {
                 return@launch
             }
             loading.dismiss()
-            Playback.item = playItem
-            startActivity(
-                Intent(this@DetailActivity, PlayerActivity::class.java)
-                    .putExtra(PlayerActivity.EXTRA_MODE, PlayerActivity.MODE_VOD)
-            )
+            val why = problem
+            if (why == null) {
+                launchPlayer(playItem)
+                return@launch
+            }
+            // Formato que este dispositivo no sabe reproducir: avisar antes
+            starting = false
+            val iptv = others.firstOrNull { it.origin == Origin.IPTV }
+            val options = buildList {
+                if (iptv != null) add("▶  Ver desde IPTV")
+                add("Intentar igualmente")
+                add("Cancelar")
+            }
+            MaterialAlertDialogBuilder(this@DetailActivity)
+                .setTitle("Formato no compatible")
+                .setMessage(why)
+                .setItems(options.toTypedArray()) { _, which ->
+                    when (options[which]) {
+                        "▶  Ver desde IPTV" -> startPlayback(title, iptv!!, resumeKey, fromStart)
+                        "Intentar igualmente" -> launchPlayer(playItem)
+                    }
+                }
+                .show()
         }
+    }
+
+    private fun launchPlayer(playItem: PlayItem) {
+        Playback.item = playItem
+        startActivity(
+            Intent(this, PlayerActivity::class.java).putExtra(PlayerActivity.EXTRA_MODE, PlayerActivity.MODE_VOD)
+        )
     }
 }

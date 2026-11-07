@@ -576,7 +576,16 @@ object Plex {
     // ---------- Reproducción ----------
 
     /** Siempre el archivo original (Direct Play): Plex nunca convierte el vídeo. */
-    data class Details(val label: String, val url: String, val subs: List<Sub>, val info: Info)
+    data class Details(
+        val label: String,
+        val url: String,
+        val subs: List<Sub>,
+        val info: Info,
+        /** Formato del vídeo: códec, perfil y bits de color (p. ej. h264 · High 10 · 10 bits). */
+        val videoCodec: String? = null,
+        val videoProfile: String? = null,
+        val bitDepth: Int = 8,
+    )
 
     /** Pide a Plex el archivo, idiomas y subtítulos de una peli o episodio. */
     fun details(serverId: String, key: String): Details {
@@ -590,11 +599,19 @@ object Plex {
         val audio = LinkedHashSet<String>()
         val subLangs = LinkedHashSet<String>()
         val subs = ArrayList<Sub>()
+        var vCodec: String? = media.str("videoCodec")
+        var vProfile: String? = media.str("videoProfile")
+        var vBits = 8
         val streams = part.optJSONArray("Stream")
         if (streams != null) for (i in 0 until streams.length()) {
             val st = streams.optJSONObject(i) ?: continue
             val lang = st.str("languageTag")?.take(2)?.uppercase() ?: st.str("languageCode")?.let { lang3(it) }
             when (st.optInt("streamType")) {
+                1 -> {
+                    vCodec = st.str("codec") ?: vCodec
+                    vProfile = st.str("profile") ?: vProfile
+                    vBits = st.optInt("bitDepth", 8).takeIf { it > 0 } ?: 8
+                }
                 2 -> lang?.let { audio += it }
                 3 -> {
                     lang?.let { subLangs += it }
@@ -621,7 +638,10 @@ object Plex {
             subLangs.takeIf { it.isNotEmpty() }?.let { "Subs " + it.joinToString("/") },
         ).joinToString(" · ")
 
-        return Details(label, withToken("${s.uri}$partKey", s.token), subs, info(s, m))
+        return Details(
+            label, withToken("${s.uri}$partKey", s.token), subs, info(s, m),
+            vCodec?.lowercase(), vProfile, vBits,
+        )
     }
 
     private fun tags(m: JSONObject, name: String): List<String> {

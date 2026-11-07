@@ -610,14 +610,23 @@ object Home {
             counts[k] = (counts[k] ?: 0) + 1
             names.getOrPut(k) { g }
         }
-        return counts.entries.filter { it.value >= min }
+        val list = counts.entries.filter { it.value >= min }
             .sortedByDescending { it.value }
             .mapNotNull { names[it.key] }
+        return list.filter { isAnimation(it) } + list.filterNot { isAnimation(it) }
     }
 
+    /** Una categoría, de lo más reciente a lo más antiguo por año de estreno. */
     fun byGenre(items: List<CatalogItem>, genre: String): List<CatalogItem> {
         val k = Titles.genreKey(genre)
-        return items.filter { k in it.genreKeys }.sortedByDescending { it.added }
+        return items.filter { k in it.genreKeys }
+            .sortedWith(compareByDescending<CatalogItem> { it.year ?: 0 }.thenByDescending { it.added })
+    }
+
+    /** Animación va delante del resto de categorías. */
+    private fun isAnimation(g: String): Boolean {
+        val k = Titles.genreKey(g)
+        return k.startsWith("animacion") || k.startsWith("animation") || k == "dibujos animados"
     }
 
     /** Plataformas: se detectan por las categorías de tu proveedor IPTV ("NETFLIX", "HBO MAX"…). */
@@ -666,6 +675,13 @@ object Home {
             .take(40)
         if (fresh.size >= 5) out += Row("Estrenos", fresh)
 
+        // Animación, antes que las plataformas y el resto de categorías
+        val animation = genres.filter { isAnimation(it) }
+        for (g in animation) {
+            val list = byGenre(items, g).take(30)
+            if (list.size >= 5) out += Row(g, list)
+        }
+
         // Novedades por plataforma (si tu proveedor las tiene como categorías)
         for ((name, words) in PLATFORMS) {
             val list = items.filter { it.genreKeys.any { g -> isPlatform(g, words) } }
@@ -678,7 +694,7 @@ object Home {
         if (top.size >= 8) out += Row("Mejor valoradas", top)
 
         val platformWords = PLATFORMS.flatMap { it.second }
-        for (g in genres.filter { !isPlatform(Titles.genreKey(it), platformWords) }.take(14)) {
+        for (g in genres.filter { !isPlatform(Titles.genreKey(it), platformWords) && !isAnimation(it) }.take(14)) {
             val list = byGenre(items, g).take(30)
             if (list.size >= 5) out += Row(g, list)
         }
