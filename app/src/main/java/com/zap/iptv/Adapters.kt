@@ -134,6 +134,9 @@ class PosterAdapter(
     var items: List<CatalogItem> = emptyList()
         private set
 
+    /** Mostrar la etiqueta SERIE / PELÍCULA (donde se mezclan ambas). */
+    var showKind = false
+
     @SuppressLint("NotifyDataSetChanged")
     fun submit(list: List<CatalogItem>) {
         items = list
@@ -142,6 +145,7 @@ class PosterAdapter(
 
     inner class VH(v: View) : RecyclerView.ViewHolder(v) {
         val box: View = v.findViewById(R.id.box)
+        val kind: TextView = v.findViewById(R.id.kind)
         val img: ImageView = v.findViewById(R.id.img)
         val ph: TextView = v.findViewById(R.id.ph)
         val badge: TextView = v.findViewById(R.id.badge)
@@ -179,6 +183,12 @@ class PosterAdapter(
         h.title.text = it.title
         h.year.text = it.year?.toString() ?: ""
         h.badge.text = it.badge
+        if (showKind) {
+            h.kind.text = if (it is Show) "SERIE" else "PELÍCULA"
+            h.kind.visibility = View.VISIBLE
+        } else {
+            h.kind.visibility = View.GONE
+        }
         val q = it.quality
         h.quality.text = q ?: ""
         h.quality.visibility = if (q != null) View.VISIBLE else View.GONE
@@ -274,6 +284,9 @@ class RowsAdapter(private val onClick: (CatalogItem) -> Unit) :
 
     private var rows: List<Row> = emptyList()
 
+    /** Mostrar la etiqueta SERIE / PELÍCULA en las carátulas. */
+    var showKind = false
+
     @SuppressLint("NotifyDataSetChanged")
     fun submit(list: List<Row>) {
         rows = list
@@ -304,6 +317,7 @@ class RowsAdapter(private val onClick: (CatalogItem) -> Unit) :
     override fun onBindViewHolder(h: VH, position: Int) {
         val row = rows[position]
         h.title.text = row.title
+        h.adapter.showKind = showKind
         h.adapter.submit(row.items)
         h.list.scrollToPosition(0)
     }

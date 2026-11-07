@@ -332,9 +332,11 @@ class MainActivity : AppCompatActivity() {
                 // La búsqueda encuentra pelis y series estés en la pestaña que estés
                 val res = withContext(Dispatchers.Default) { Search.items(Catalog.movies + Catalog.shows, q) }
                 useAdapter(posterAdapter)
+                posterAdapter.showKind = true
                 posterAdapter.submit(res)
             } else if (t == Tab.WATCH) {
                 useAdapter(posterAdapter)
+                posterAdapter.showKind = true
                 posterAdapter.submit(Catalog.watchAll)
             } else if (t == Tab.HOME) {
                 // Inicio: pelis y series mezcladas
@@ -345,6 +347,7 @@ class MainActivity : AppCompatActivity() {
                     Home.rows(Catalog.movies + Catalog.shows, resume, genres, emptyList(), newEps)
                 }
                 useAdapter(rowsAdapter)
+                rowsAdapter.showKind = true
                 rowsAdapter.submit(rows)
             } else {
                 val shows = t == Tab.SHOWS
@@ -355,6 +358,7 @@ class MainActivity : AppCompatActivity() {
                     val newEps = if (shows) Catalog.newEpisodes else emptyList()
                     val rows = withContext(Dispatchers.Default) { Home.rows(src, resume, genres, emptyList(), newEps) }
                     useAdapter(rowsAdapter)
+                    rowsAdapter.showKind = false
                     rowsAdapter.submit(rows)
                 } else {
                     val res = withContext(Dispatchers.Default) {
@@ -365,6 +369,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                     useAdapter(posterAdapter)
+                    posterAdapter.showKind = false
                     posterAdapter.submit(res)
                 }
             }
