@@ -154,11 +154,26 @@ data class IptvData(val live: List<Channel>, val movies: List<Movie>, val shows:
 
 data class PlexServer(val id: String, val name: String, val uri: String, val token: String)
 
+/** Algo a medias en Plex ("Seguir viendo" de tu cuenta en ese servidor). */
+data class PlexProgress(
+    val server: String,
+    val type: String,
+    val key: String,
+    val guid: String?,
+    val showKey: String?,
+    val showGuid: String?,
+    val season: Int,
+    val number: Int,
+    val offsetMs: Long,
+    val viewedAt: Long,
+)
+
 data class PlexData(
     val servers: List<PlexServer>,
     val movies: List<Movie>,
     val shows: List<Show>,
     val watchlist: List<WatchItem> = emptyList(),
+    val progress: List<PlexProgress> = emptyList(),
 ) {
     companion object {
         val EMPTY = PlexData(emptyList(), emptyList(), emptyList())
@@ -334,6 +349,9 @@ data class PlayItem(
     val resumeKey: String? = null,
     /** Empezar desde el principio aunque haya una posición guardada. */
     val fromStart: Boolean = false,
+    /** Si viene de Plex: para guardar el progreso también en tu cuenta de Plex. */
+    val plexServer: String? = null,
+    val plexKey: String? = null,
 )
 
 object Playback {

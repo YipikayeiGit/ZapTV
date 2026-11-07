@@ -13,6 +13,9 @@ import android.view.WindowManager
 import android.widget.TextView
 import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -371,14 +374,55 @@ class PlayerActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        if (::player.isInitialized) player.play()
+        if (::player.isInitialized) {
+            player.play()
+            if (!live && item?.plexKey != null) {
+                handler.removeCallbacks(plexReporter)
+                handler.postDelayed(plexReporter, 10_000)
+            }
+        }
     }
 
     override fun onStop() {
         super.onStop()
         if (::player.isInitialized) {
-            if (!live) savePosition()
+            if (!live) {
+                savePosition()
+                reportPlex(stopped = true)
+            }
             player.pause()
+        }
+        handler.removeCallbacks(plexReporter)
+    }
+
+    // ---------- Guardar el progreso en tu cuenta de Plex ----------
+
+    private var scrobbled = false
+
+    private val plexReporter = object : Runnable {
+        override fun run() {
+            reportPlex(stopped = false)
+            handler.postDelayed(this, 15_000)
+        }
+    }
+
+    private fun reportPlex(stopped: Boolean) {
+        val it = item ?: return
+        val server = it.plexServer ?: return
+        val key = it.plexKey ?: return
+        val dur = player.duration.takeIf { d -> d != C.TIME_UNSET && d > 0 } ?: return
+        val pos = player.currentPosition
+        val state = when {
+            stopped -> "stopped"
+            player.isPlaying -> "playing"
+            else -> "paused"
+        }
+        // Al pasar del 90 %, se marca como visto en Plex
+        val finished = !scrobbled && pos > dur * 0.9
+        if (finished) scrobbled = true
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching { Plex.timeline(server, key, state, pos, dur) }
+            if (finished) runCatching { Plex.scrobble(server, key) }
         }
     }
 

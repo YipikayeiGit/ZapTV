@@ -422,7 +422,11 @@ class MainActivity : AppCompatActivity() {
     private fun rebuild() {
         lifecycleScope.launch {
             try {
-                withContext(Dispatchers.Default) { Catalog.rebuild() }
+                withContext(Dispatchers.Default) {
+                    Catalog.rebuild()
+                    // Tu "Seguir viendo" de Plex
+                    runCatching { PlexSync.importProgress(this@MainActivity) }
+                }
             } catch (e: OutOfMemoryError) {
                 toast("Sin memoria suficiente para preparar el catálogo")
                 return@launch

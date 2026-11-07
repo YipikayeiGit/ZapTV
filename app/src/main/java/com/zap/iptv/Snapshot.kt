@@ -13,7 +13,7 @@ import java.io.FileOutputStream
  * sin volver a leer los archivos enormes del proveedor.
  */
 object Snapshot {
-    private const val VERSION = 6
+    private const val VERSION = 7
 
     // ---------- Escritura ----------
 
@@ -86,6 +86,11 @@ object Snapshot {
             writeInt(d.watchlist.size)
             d.watchlist.forEach { w ->
                 str(w.guid); str(w.title); writeInt(w.year ?: -1); str(w.type); str(w.thumb); strs(w.extIds)
+            }
+            writeInt(d.progress.size)
+            d.progress.forEach { p ->
+                str(p.server); str(p.type); str(p.key); str(p.guid); str(p.showKey); str(p.showGuid)
+                writeInt(p.season); writeInt(p.number); writeLong(p.offsetMs); writeLong(p.viewedAt)
             }
         }
     }
@@ -182,6 +187,12 @@ object Snapshot {
         val watch = List(int()) {
             WatchItem(str(), str() ?: "", int().takeIf { it >= 0 }, str() ?: "", str(), strs())
         }
-        PlexData(servers, movies, shows, watch)
+        val progress = List(int()) {
+            PlexProgress(
+                str() ?: "", str() ?: "", str() ?: "", str(), str(), str(),
+                int(), int(), long(), long(),
+            )
+        }
+        PlexData(servers, movies, shows, watch, progress)
     }
 }

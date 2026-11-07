@@ -112,8 +112,10 @@ object Plex {
                     PlexData.EMPTY to "• $name: ${c.second}"
                 } else {
                     try {
-                        val d = library(s, multi)
-                        d to "• $name: conectado (${c.second}) · ${d.movies.size} pelis · ${d.shows.size} series"
+                        val prog = runCatching { onDeck(s) }.getOrDefault(emptyList())
+                        val d = library(s, multi).copy(progress = prog)
+                        d to "• $name: conectado (${c.second}) · ${d.movies.size} pelis · ${d.shows.size} series" +
+                            " · ${prog.size} en seguir viendo"
                     } catch (e: Exception) {
                         PlexData.EMPTY to "• $name: conectado (${c.second}) pero no se pudo leer la biblioteca: ${e.message ?: e.javaClass.simpleName}"
                     }
@@ -140,6 +142,7 @@ object Plex {
             parts.flatMap { it.first.movies },
             parts.flatMap { it.first.shows },
             watch.getOrDefault(emptyList()),
+            parts.flatMap { it.first.progress },
         )
         save(ctx, data)
         data
@@ -487,6 +490,47 @@ object Plex {
                 minutes = m.optLong("duration").takeIf { it > 0 }?.let { (it / 60_000).toInt() },
             )
         }
+    }
+
+    // ---------- Seguir viendo: leer y guardar el progreso en tu cuenta ----------
+
+    /** Lo que tienes a medias en este servidor (y el siguiente capítulo de tus series). */
+    private fun onDeck(s: PlexServer): List<PlexProgress> {
+        val j = JSONObject(Http.get("${s.uri}/library/onDeck?X-Plex-Container-Start=0&X-Plex-Container-Size=80", headers(s.token)))
+        val arr = j.optJSONObject("MediaContainer")?.optJSONArray("Metadata") ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            val m = arr.optJSONObject(i) ?: return@mapNotNull null
+            val type = m.optString("type")
+            if (type != "movie" && type != "episode") return@mapNotNull null
+            PlexProgress(
+                server = s.id,
+                type = type,
+                key = m.optString("ratingKey"),
+                guid = m.str("guid"),
+                showKey = m.str("grandparentRatingKey"),
+                showGuid = m.str("grandparentGuid"),
+                season = m.optInt("parentIndex", -1),
+                number = m.optInt("index", -1),
+                offsetMs = m.optLong("viewOffset"),
+                viewedAt = m.optLong("lastViewedAt"),
+            )
+        }
+    }
+
+    /** Guarda en Plex por dónde vas (así la app oficial de Plex también lo sabe). */
+    fun timeline(serverId: String, key: String, state: String, timeMs: Long, durationMs: Long) {
+        val s = servers[serverId] ?: return
+        Http.get(
+            "${s.uri}/:/timeline?ratingKey=$key&key=%2Flibrary%2Fmetadata%2F$key" +
+                "&state=$state&time=$timeMs&duration=$durationMs",
+            headers(s.token), timeout = 8_000,
+        )
+    }
+
+    /** Marca como visto en Plex. */
+    fun scrobble(serverId: String, key: String) {
+        val s = servers[serverId] ?: return
+        Http.get("${s.uri}/:/scrobble?identifier=com.plexapp.plugins.library&key=$key", headers(s.token), timeout = 8_000)
     }
 
     // ---------- Reproducción ----------
