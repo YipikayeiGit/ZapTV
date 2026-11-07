@@ -69,6 +69,19 @@ object Xtream {
         return if (id == null) emptyList() else listOf("tmdb://$id")
     }
 
+    /** Todas las categorías de un título: la principal y las extra (category_ids). */
+    private fun catIds(m: Map<String, String>): List<String> {
+        val extra = m["category_ids"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+        val main = m["category_id"]?.takeIf { it.isNotEmpty() }
+        return if (main == null) extra.distinct() else (listOf(main) + extra).distinct()
+    }
+
+    private fun genresFor(ids: List<String>, names: Map<String, List<String>>): List<String> = when (ids.size) {
+        0 -> emptyList()
+        1 -> names[ids[0]] ?: emptyList()
+        else -> ids.flatMap { names[it] ?: emptyList() }.distinct()
+    }
+
     private fun rating(v: String?): Float? = v?.replace(',', '.')?.toFloatOrNull()?.takeIf { it > 0f && it <= 10f }
 
     fun parse(dir: File, acc: Account): IptvData {
@@ -93,9 +106,10 @@ object Xtream {
         val movies = ArrayList<Movie>()
         forEachFlatObject(
             File(dir, "vod.json"),
-            setOf("stream_id", "name", "stream_icon", "container_extension", "year", "added", "rating", "category_id", "tmdb", "tmdb_id"),
+            setOf("stream_id", "name", "stream_icon", "container_extension", "year", "added", "rating", "category_id", "category_ids", "tmdb", "tmdb_id"),
         ) { m ->
             val id = m["stream_id"] ?: return@forEachFlatObject
+            val catIds = catIds(m)
             val name = m["name"]?.takeIf { it.isNotBlank() } ?: return@forEachFlatObject
             val ext = m["container_extension"]?.takeIf { it.isNotBlank() } ?: "mp4"
             val c = Titles.clean(name)
@@ -106,22 +120,23 @@ object Xtream {
                 sources = listOf(
                     SourceRef(
                         Origin.IPTV, "IPTV · ${ext.uppercase()}", url = acc.movie(id, ext),
-                        quality = Quality.fromText(name, vodCats[m["category_id"]]),
+                        quality = Quality.fromText(name, *catIds.map { vodCats[it] }.toTypedArray()),
                         extIds = tmdb(m),
                     )
                 ),
                 added = m["added"]?.toLongOrNull() ?: 0L,
                 rating = rating(m["rating"]),
-                genres = vodGenre[m["category_id"]] ?: emptyList(),
+                genres = genresFor(catIds, vodGenre),
             )
         }
 
         val shows = ArrayList<Show>()
         forEachFlatObject(
             File(dir, "series.json"),
-            setOf("series_id", "name", "cover", "plot", "year", "releaseDate", "last_modified", "rating", "category_id", "tmdb", "tmdb_id"),
+            setOf("series_id", "name", "cover", "plot", "year", "releaseDate", "last_modified", "rating", "category_id", "category_ids", "tmdb", "tmdb_id"),
         ) { m ->
             val id = m["series_id"] ?: return@forEachFlatObject
+            val catIds = catIds(m)
             val name = m["name"]?.takeIf { it.isNotBlank() } ?: return@forEachFlatObject
             val c = Titles.clean(name)
             shows += Show(
@@ -134,8 +149,8 @@ object Xtream {
                 xtreamIds = listOf(id),
                 added = m["last_modified"]?.toLongOrNull() ?: 0L,
                 rating = rating(m["rating"]),
-                genres = seriesGenre[m["category_id"]] ?: emptyList(),
-                quality = Quality.fromText(name, seriesCats[m["category_id"]]),
+                genres = genresFor(catIds, seriesGenre),
+                quality = Quality.fromText(name, *catIds.map { seriesCats[it] }.toTypedArray()),
                 extIds = tmdb(m),
             )
         }
@@ -176,9 +191,13 @@ object Xtream {
             val num = e.optInt("episode_num", -1)
             if (season < 0 || num < 0) return
             val ext = e.str("container_extension") ?: "mp4"
+            val info = e.optJSONObject("info")
             out += Episode(
                 season, num, e.str("title"),
                 listOf(SourceRef(Origin.IPTV, "IPTV · ${ext.uppercase()}", url = acc.episode(id, ext))),
+                thumb = info?.str("movie_image")?.takeIf { it.startsWith("http") },
+                summary = info?.str("plot"),
+                minutes = info?.optLong("duration_secs")?.takeIf { it > 0 }?.let { (it / 60).toInt() },
             )
         }
 

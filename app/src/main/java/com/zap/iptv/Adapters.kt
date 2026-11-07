@@ -213,11 +213,22 @@ class EpisodeAdapter(
     }
 
     inner class VH(v: View) : RecyclerView.ViewHolder(v) {
+        val thumbBox: View = v.findViewById(R.id.thumbBox)
+        val thumb: ImageView = v.findViewById(R.id.thumb)
         val num: TextView = v.findViewById(R.id.num)
         val title: TextView = v.findViewById(R.id.title)
+        val summary: TextView = v.findViewById(R.id.summary)
         val badge: TextView = v.findViewById(R.id.badge)
 
         init {
+            thumbBox.clipToOutline = true
+            // Imagen más grande en la tele que en el móvil
+            val dm = v.resources.displayMetrics
+            val wDp = if (dm.widthPixels / dm.density > 700) 200 else 128
+            thumbBox.layoutParams = thumbBox.layoutParams.apply {
+                width = (wDp * dm.density).toInt()
+                height = (wDp * 9 / 16 * dm.density).toInt()
+            }
             v.setOnClickListener {
                 val p = bindingAdapterPosition
                 if (p != RecyclerView.NO_POSITION) onClick(items[p])
@@ -231,10 +242,27 @@ class EpisodeAdapter(
     override fun onBindViewHolder(h: VH, position: Int) {
         val e = items[position]
         h.num.text = e.number.toString()
-        h.title.text = e.title ?: "Episodio ${e.number}"
+        h.title.text = "${e.number}. " + (e.title ?: "Episodio ${e.number}")
+        h.summary.text = e.summary ?: ""
+        h.summary.visibility = if (e.summary.isNullOrBlank()) View.GONE else View.VISIBLE
         val origins = Origin.entries.filter { o -> e.sources.any { it.origin == o } }
             .joinToString(" · ") { it.label }
-        h.badge.text = if (isNew(e)) "NUEVO · $origins" else origins
+        h.badge.text = listOfNotNull(
+            "NUEVO".takeIf { isNew(e) },
+            e.minutes?.let { "$it min" },
+            origins,
+        ).joinToString(" · ")
+        h.num.visibility = View.VISIBLE
+        if (e.thumb != null) {
+            h.thumb.load(e.thumb) {
+                crossfade(false)
+                size(400, 225)
+                listener(onSuccess = { _, _ -> h.num.visibility = View.INVISIBLE })
+            }
+        } else {
+            h.thumb.dispose()
+            h.thumb.setImageDrawable(null)
+        }
     }
 
     override fun getItemCount() = items.size

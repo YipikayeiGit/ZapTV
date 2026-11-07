@@ -101,6 +101,19 @@ fun forEachFlatObject(file: File, fields: Set<String>, onItem: (Map<String, Stri
                         when (r.peek()) {
                             JsonToken.STRING, JsonToken.NUMBER -> m[name] = r.nextString()
                             JsonToken.BOOLEAN -> m[name] = r.nextBoolean().toString()
+                            // Listas de valores simples (p. ej. category_ids: [12, 45]) → "12,45"
+                            JsonToken.BEGIN_ARRAY -> {
+                                val parts = ArrayList<String>(4)
+                                r.beginArray()
+                                while (r.hasNext()) {
+                                    when (r.peek()) {
+                                        JsonToken.STRING, JsonToken.NUMBER -> parts += r.nextString()
+                                        else -> r.skipValue()
+                                    }
+                                }
+                                r.endArray()
+                                m[name] = parts.joinToString(",")
+                            }
                             else -> r.skipValue()
                         }
                     } else {

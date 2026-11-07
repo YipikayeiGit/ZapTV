@@ -1,6 +1,9 @@
 package com.zap.iptv
 
 import android.content.Context
+import androidx.media3.common.C
+import androidx.media3.common.Format
+import java.text.Normalizer
 import java.util.Locale
 
 /** Idiomas por defecto de audio y subtítulos (se aplican si el vídeo los tiene). */
@@ -27,4 +30,42 @@ object Languages {
 
     fun subsLabel(ctx: Context): String =
         options.firstOrNull { it.first == subs(ctx) }?.second ?: "Desactivados"
+
+    /** Formas en que puede venir escrito cada idioma en una pista ("Spanish", "Castellano", "spa"…). */
+    private val ALIASES = mapOf(
+        "es" to setOf("es", "spa", "esp", "spanish", "espanol", "castellano", "castilian"),
+        "en" to setOf("en", "eng", "english", "ingles"),
+        "ca" to setOf("ca", "cat", "catalan", "catala"),
+        "fr" to setOf("fr", "fre", "fra", "french", "francais", "frances"),
+        "it" to setOf("it", "ita", "italian", "italiano"),
+        "de" to setOf("de", "ger", "deu", "german", "deutsch", "aleman"),
+        "pt" to setOf("pt", "por", "portuguese", "portugues"),
+        "ja" to setOf("ja", "jpn", "japanese", "japones"),
+    )
+
+    private val NON_LETTERS = Regex("[^a-z]+")
+
+    private fun words(s: String?): List<String> {
+        if (s.isNullOrBlank()) return emptyList()
+        val plain = Normalizer.normalize(s, Normalizer.Form.NFD).replace(Regex("\\p{Mn}+"), "").lowercase()
+        return plain.split(NON_LETTERS).filter { it.isNotEmpty() }
+    }
+
+    /** ¿Esta pista está en el idioma [code]? Mira el código de idioma y también el nombre. */
+    fun matches(f: Format, code: String): Boolean {
+        val aliases = ALIASES[code] ?: setOf(code)
+        val lang = f.language?.lowercase()?.substringBefore('-')?.substringBefore('_')
+        if (lang != null && lang in aliases) return true
+        return words(f.label).any { it in aliases }
+    }
+
+    /** Menor es mejor: castellano antes que latino, completos antes que forzados o para sordos. */
+    fun penalty(f: Format): Int {
+        val w = words(f.label) + words(f.language)
+        var p = 0
+        if (f.selectionFlags and C.SELECTION_FLAG_FORCED != 0 || "forced" in w || "forzados" in w) p += 4
+        if ("latino" in w || "latin" in w || "latam" in w || "419" in (f.language ?: "")) p += 2
+        if ("sdh" in w || "cc" in w) p += 1
+        return p
+    }
 }

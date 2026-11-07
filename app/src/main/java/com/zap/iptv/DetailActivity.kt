@@ -364,7 +364,20 @@ class DetailActivity : AppCompatActivity() {
             .show()
     }
 
+    /** Evita que varias pulsaciones abran el vídeo varias veces. */
+    private var starting = false
+
+    override fun onResume() {
+        super.onResume()
+        starting = false
+    }
+
     private fun startPlayback(title: String, src: SourceRef, resumeKey: String, fromStart: Boolean) {
+        if (starting) return
+        starting = true
+        val view = LayoutInflater.from(this).inflate(R.layout.dialog_loading, null)
+        view.findViewById<TextView>(R.id.text).text = "Cargando $title…"
+        val loading = MaterialAlertDialogBuilder(this).setView(view).setCancelable(false).show()
         lifecycleScope.launch {
             val playItem = try {
                 withContext(Dispatchers.IO) {
@@ -376,8 +389,12 @@ class DetailActivity : AppCompatActivity() {
                     }
                 }
             } catch (e: CancellationException) {
+                loading.dismiss()
+                starting = false
                 throw e
             } catch (e: Exception) {
+                loading.dismiss()
+                starting = false
                 Toast.makeText(
                     this@DetailActivity,
                     "No se pudo abrir: ${e.message ?: e.javaClass.simpleName}",
@@ -385,6 +402,7 @@ class DetailActivity : AppCompatActivity() {
                 ).show()
                 return@launch
             }
+            loading.dismiss()
             Playback.item = playItem
             startActivity(
                 Intent(this@DetailActivity, PlayerActivity::class.java)

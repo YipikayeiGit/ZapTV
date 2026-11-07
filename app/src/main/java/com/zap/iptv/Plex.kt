@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.os.Build
 import android.util.JsonReader
 import android.util.JsonToken
+import android.util.Xml
 import androidx.media3.common.MimeTypes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -12,9 +13,11 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import org.json.JSONArray
 import org.json.JSONObject
+import org.xmlpull.v1.XmlPullParser
 import java.io.File
 import java.io.IOException
 import java.io.InputStreamReader
+import java.io.StringReader
 import java.net.URLEncoder
 import java.util.UUID
 
@@ -145,43 +148,91 @@ object Plex {
     /** "Mi lista" (watchlist) de la cuenta de Plex. */
     private fun watchlist(tok: String): List<WatchItem> {
         var lastError: Exception? = null
+        var best: List<WatchItem>? = null
         for (host in listOf("https://discover.provider.plex.tv", "https://metadata.provider.plex.tv")) {
             try {
                 val out = ArrayList<WatchItem>()
                 var start = 0
                 while (true) {
-                    val j = JSONObject(
-                        Http.get(
-                            "$host/library/sections/watchlist/all?includeCollections=1&includeExternalMedia=1&includeGuids=1" +
-                                "&X-Plex-Container-Start=$start&X-Plex-Container-Size=200",
-                            headers(tok),
-                        )
+                    val text = Http.get(
+                        "$host/library/sections/watchlist/all?includeCollections=1&includeExternalMedia=1" +
+                            "&includeGuids=1&sort=watchlistedAt:desc" +
+                            "&X-Plex-Container-Start=$start&X-Plex-Container-Size=100",
+                        headers(tok),
                     )
-                    val mc = j.optJSONObject("MediaContainer") ?: break
-                    val arr = mc.optJSONArray("Metadata")
-                    val n = arr?.length() ?: 0
-                    if (arr != null) for (i in 0 until n) {
-                        val m = arr.optJSONObject(i) ?: continue
-                        val title = m.str("title") ?: continue
-                        val guids = m.optJSONArray("Guid")
-                        val ext = if (guids == null) emptyList()
-                        else (0 until guids.length()).mapNotNull { k -> guids.optJSONObject(k)?.str("id") }
-                        out += WatchItem(
-                            m.str("guid"), title, m.optInt("year").takeIf { it > 0 }, m.optString("type"),
-                            thumb = m.str("thumb")?.takeIf { it.startsWith("http") },
-                            extIds = ext,
-                        )
-                    }
-                    start += 200
-                    val total = mc.optInt("totalSize", -1)
-                    if (n == 0 || (total in 0..start) || (total < 0 && n < 200)) break
+                    val (items, total) = parseWatchPage(text)
+                    out += items
+                    start += 100
+                    if (items.isEmpty() || (total in 0..start) || (total < 0 && items.size < 100)) break
                 }
-                return out
+                if (out.size > (best?.size ?: -1)) best = out
+                // Con resultados no hace falta probar el otro servicio
+                if (out.isNotEmpty()) return out
             } catch (e: Exception) {
                 lastError = e
             }
         }
-        throw lastError ?: IOException("sin respuesta")
+        return best ?: throw (lastError ?: IOException("sin respuesta"))
+    }
+
+    /** Una página de Mi lista. Plex a veces responde en JSON y a veces en XML. */
+    private fun parseWatchPage(text: String): Pair<List<WatchItem>, Int> {
+        val t = text.trimStart()
+        return if (t.startsWith("<")) parseWatchXml(t) else parseWatchJson(t)
+    }
+
+    private fun parseWatchJson(text: String): Pair<List<WatchItem>, Int> {
+        val mc = JSONObject(text).optJSONObject("MediaContainer") ?: return emptyList<WatchItem>() to 0
+        val arr = mc.optJSONArray("Metadata")
+        val out = ArrayList<WatchItem>()
+        if (arr != null) for (i in 0 until arr.length()) {
+            val m = arr.optJSONObject(i) ?: continue
+            val title = m.str("title") ?: continue
+            val guids = m.optJSONArray("Guid")
+            val ext = if (guids == null) emptyList()
+            else (0 until guids.length()).mapNotNull { k -> guids.optJSONObject(k)?.str("id") }
+            out += WatchItem(
+                m.str("guid"), title, m.optInt("year").takeIf { it > 0 }, m.optString("type"),
+                thumb = m.str("thumb")?.takeIf { it.startsWith("http") },
+                extIds = ext,
+            )
+        }
+        return out to mc.optInt("totalSize", -1)
+    }
+
+    private fun parseWatchXml(text: String): Pair<List<WatchItem>, Int> {
+        val p = Xml.newPullParser()
+        p.setInput(StringReader(text))
+        val out = ArrayList<WatchItem>()
+        var total = -1
+        var current: WatchItem? = null
+        var ext = ArrayList<String>()
+        var event = p.eventType
+        while (event != XmlPullParser.END_DOCUMENT) {
+            when (event) {
+                XmlPullParser.START_TAG -> when (p.name) {
+                    "MediaContainer" -> total = p.getAttributeValue(null, "totalSize")?.toIntOrNull() ?: -1
+                    "Video", "Directory", "Metadata" -> {
+                        val title = p.getAttributeValue(null, "title")
+                        ext = ArrayList()
+                        current = if (title == null) null else WatchItem(
+                            p.getAttributeValue(null, "guid"),
+                            title,
+                            p.getAttributeValue(null, "year")?.toIntOrNull(),
+                            p.getAttributeValue(null, "type") ?: "",
+                            thumb = p.getAttributeValue(null, "thumb")?.takeIf { it.startsWith("http") },
+                        )
+                    }
+                    "Guid" -> p.getAttributeValue(null, "id")?.let { ext += it }
+                }
+                XmlPullParser.END_TAG -> if (p.name == "Video" || p.name == "Directory" || p.name == "Metadata") {
+                    current?.let { out += it.copy(extIds = ext.toList()) }
+                    current = null
+                }
+            }
+            event = p.next()
+        }
+        return out to total
     }
 
     /**
@@ -397,6 +448,11 @@ object Plex {
         "${s.uri}/photo/:/transcode?width=240&height=360&minSize=1&upscale=1" +
             "&url=${URLEncoder.encode(thumb, "UTF-8")}&X-Plex-Token=${s.token}"
 
+    /** Fotograma de un capítulo en 16:9, pequeño para que cargue rápido. */
+    private fun still(s: PlexServer, thumb: String): String =
+        "${s.uri}/photo/:/transcode?width=400&height=225&minSize=1&upscale=1" +
+            "&url=${URLEncoder.encode(thumb, "UTF-8")}&X-Plex-Token=${s.token}"
+
     private fun resLabel(r: String?): String? {
         if (r.isNullOrEmpty()) return null
         return when (r.lowercase()) {
@@ -422,6 +478,9 @@ object Plex {
             Episode(
                 season, num, m.str("title"),
                 listOf(SourceRef(Origin.PLEX, label, plexServer = s.id, plexKey = m.optString("ratingKey"))),
+                thumb = m.str("thumb")?.let { still(s, it) },
+                summary = m.str("summary"),
+                minutes = m.optLong("duration").takeIf { it > 0 }?.let { (it / 60_000).toInt() },
             )
         }
     }

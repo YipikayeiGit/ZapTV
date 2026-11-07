@@ -136,6 +136,10 @@ data class Episode(
     val number: Int,
     val title: String?,
     val sources: List<SourceRef>,
+    /** Imagen del capítulo (fotograma), resumen y duración. */
+    val thumb: String? = null,
+    val summary: String? = null,
+    val minutes: Int? = null,
 )
 
 data class IptvData(val live: List<Channel>, val movies: List<Movie>, val shows: List<Show>) {
@@ -389,7 +393,13 @@ object Merge {
         for (list in lists) for (e in list) {
             val k = e.season.toLong() * 100_000 + e.number
             val o = map[k]
-            map[k] = if (o == null) e else o.copy(title = o.title ?: e.title, sources = o.sources + e.sources)
+            map[k] = if (o == null) e else o.copy(
+                title = o.title ?: e.title,
+                sources = o.sources + e.sources,
+                thumb = o.thumb ?: e.thumb,
+                summary = o.summary ?: e.summary,
+                minutes = o.minutes ?: e.minutes,
+            )
         }
         return map.values.sortedWith(compareBy({ it.season }, { it.number }))
     }

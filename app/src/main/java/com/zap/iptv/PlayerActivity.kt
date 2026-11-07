@@ -21,6 +21,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -94,6 +96,13 @@ class PlayerActivity : AppCompatActivity() {
 
         player.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) = handleError(error)
+
+            override fun onTracksChanged(tracks: Tracks) {
+                if (!live && !tracksApplied && !tracks.groups.isEmpty()) {
+                    tracksApplied = true
+                    applyLanguages(tracks)
+                }
+            }
         })
         playerView.player = player
         // El reproductor recibe las teclas del mando (OK, flechas, play/pausa)
@@ -175,6 +184,35 @@ class PlayerActivity : AppCompatActivity() {
         player.setMediaItem(mi, startAt)
         player.prepare()
         player.playWhenReady = true
+    }
+
+    private var tracksApplied = false
+
+    /**
+     * El reproductor solo entiende códigos de idioma ("es"); muchas pistas vienen sin él
+     * y solo con un nombre ("Spanish", "Castellano"). Aquí se eligen también por el nombre.
+     */
+    private fun applyLanguages(tracks: Tracks) {
+        val builder = player.trackSelectionParameters.buildUpon()
+        var changed = false
+
+        fun choose(type: Int, code: String) {
+            val groups = tracks.groups.filter { it.type == type }
+            val alreadyOk = groups.any { g -> (0 until g.length).any { i -> g.isTrackSelected(i) && Languages.matches(g.getTrackFormat(i), code) } }
+            if (alreadyOk) return
+            val best = groups.flatMap { g ->
+                (0 until g.length).filter { i -> g.isTrackSupported(i) && Languages.matches(g.getTrackFormat(i), code) }
+                    .map { i -> g to i }
+            }.minByOrNull { (g, i) -> Languages.penalty(g.getTrackFormat(i)) } ?: return
+            builder.setTrackTypeDisabled(type, false)
+            builder.setOverrideForType(TrackSelectionOverride(best.first.mediaTrackGroup, best.second))
+            changed = true
+        }
+
+        choose(C.TRACK_TYPE_AUDIO, Languages.audioOrDevice(this))
+        val subs = Languages.subs(this)
+        if (subs.isNotEmpty()) choose(C.TRACK_TYPE_TEXT, subs)
+        if (changed) player.trackSelectionParameters = builder.build()
     }
 
     private fun savedPosition(it: PlayItem): Long =

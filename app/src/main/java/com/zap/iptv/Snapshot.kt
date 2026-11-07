@@ -13,7 +13,7 @@ import java.io.FileOutputStream
  * sin volver a leer los archivos enormes del proveedor.
  */
 object Snapshot {
-    private const val VERSION = 4
+    private const val VERSION = 5
 
     // ---------- Escritura ----------
 

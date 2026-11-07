@@ -6,18 +6,34 @@
     android:clickable="true"
     android:focusable="true"
     android:gravity="center_vertical"
-    android:minHeight="60dp"
     android:orientation="horizontal"
-    android:paddingStart="4dp"
-    android:paddingEnd="12dp">
+    android:paddingStart="8dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="12dp"
+    android:paddingBottom="8dp">
 
-    <TextView
-        android:id="@+id/num"
-        android:layout_width="36dp"
-        android:layout_height="wrap_content"
-        android:gravity="end"
-        android:textColor="@color/muted"
-        android:textSize="15sp" />
+    <FrameLayout
+        android:id="@+id/thumbBox"
+        android:layout_width="160dp"
+        android:layout_height="90dp"
+        android:background="@drawable/bg_logo">
+
+        <TextView
+            android:id="@+id/num"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:textColor="@color/muted"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <ImageView
+            android:id="@+id/thumb"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:importantForAccessibility="no"
+            android:scaleType="centerCrop" />
+    </FrameLayout>
 
     <LinearLayout
         android:layout_width="0dp"
@@ -33,13 +49,25 @@
             android:ellipsize="end"
             android:maxLines="1"
             android:textColor="@color/text"
-            android:textSize="15sp" />
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/summary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:ellipsize="end"
+            android:maxLines="2"
+            android:textColor="@color/muted"
+            android:textSize="13sp" />
 
         <TextView
             android:id="@+id/badge"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textColor="@color/muted"
+            android:layout_marginTop="4dp"
+            android:textColor="@color/accent"
             android:textSize="12sp" />
     </LinearLayout>
 </LinearLayout>
