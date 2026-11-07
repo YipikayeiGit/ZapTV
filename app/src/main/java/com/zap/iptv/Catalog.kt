@@ -615,8 +615,8 @@ object Home {
         newEpisodes: List<CatalogItem> = emptyList(),
     ): List<Row> {
         val out = ArrayList<Row>()
-        if (newEpisodes.isNotEmpty()) out += Row("Nuevos capítulos", newEpisodes, landscape = true)
-        if (resume.isNotEmpty()) out += Row("Seguir viendo", resume, landscape = true)
+        if (newEpisodes.isNotEmpty()) out += Row("Nuevos capítulos", newEpisodes)
+        if (resume.isNotEmpty()) out += Row("Seguir viendo", resume)
         if (watch.isNotEmpty()) out += Row("Mi lista de Plex", watch)
 
         val recent = items.filter { it.added > 0 }.sortedByDescending { it.added }.take(40)
@@ -651,7 +651,6 @@ object Home {
             if (list.size >= 5) out += Row(g, list)
         }
         if (out.isEmpty() && items.isNotEmpty()) out += Row("Todo", items.take(60))
-        // En Series, todas las filas apaisadas
-        return if (items.isNotEmpty() && items.all { it is Show }) out.map { it.copy(landscape = true) } else out
+        return out
     }
 }

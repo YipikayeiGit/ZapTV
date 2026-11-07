@@ -74,7 +74,12 @@ class DetailActivity : AppCompatActivity() {
         }
         val poster = findViewById<ImageView>(R.id.poster)
         poster.clipToOutline = true
-        item.poster?.let { poster.load(it) { crossfade(false) } }
+        item.poster?.let { url ->
+            poster.load(url) {
+                crossfade(false)
+                stableCache(url)
+            }
+        }
 
         when (val x = item) {
             is Movie -> showMovie(x)
@@ -236,7 +241,8 @@ class DetailActivity : AppCompatActivity() {
         episodesView.isFocusable = false
         seasonsView.layoutManager = LinearLayoutManager(this, RecyclerView.HORIZONTAL, false)
         seasonsView.adapter = seasonAdapter
-        episodesView.layoutManager = LinearLayoutManager(this)
+        // Capítulos en fila horizontal, como en Plex
+        episodesView.layoutManager = LinearLayoutManager(this, RecyclerView.HORIZONTAL, false)
         episodesView.adapter = episodeAdapter
         episodesView.isVisible = true
         progress.isVisible = true
@@ -258,13 +264,12 @@ class DetailActivity : AppCompatActivity() {
             seasonAdapter.submit(seasons.map { if (it == 0) "Especiales" else "Temporada $it" })
             seasonsView.isVisible = seasons.size > 1
 
-            // Empezar en la temporada del primer capítulo nuevo, o de la última que viste
+            // Seleccionar el siguiente al último visto (o el que esté a medias)
             val firstNew = if (watching && knownBefore > 0) episodes.firstOrNull { Episodes.code(it) > knownBefore } else null
-            val lastSeen = getSharedPreferences("series", MODE_PRIVATE).getInt("p:${s.key}", 0) / 10_000
-            val season = firstNew?.season ?: lastSeen.takeIf { it > 0 && it in seasons }
-            val pos = season?.let { seasons.indexOf(it) }?.takeIf { it >= 0 } ?: 0
+            val target = nextToWatch(s) ?: firstNew ?: episodes.first()
+            val pos = seasons.indexOf(target.season).coerceAtLeast(0)
             seasonAdapter.submit(seasons.map { if (it == 0) "Especiales" else "Temporada $it" }, pos)
-            showSeason(pos)
+            showSeason(pos, focus = target)
             if (firstNew != null) {
                 Toast.makeText(
                     this@DetailActivity,
@@ -274,14 +279,41 @@ class DetailActivity : AppCompatActivity() {
             }
             Episodes.markSeen(this@DetailActivity, s, Episodes.maxCode(episodes))
             Catalog.newEpisodes = Catalog.newEpisodes.filter { it.key != s.key }
-            episodesView.post { episodesView.getChildAt(0)?.requestFocus() }
         }
     }
 
-    private fun showSeason(pos: Int) {
+    /**
+     * El capítulo por el que vas: el que tienes a medias si es posterior al último visto;
+     * si no, el siguiente al último visto (o ese mismo si era el último). Null si no has visto nada.
+     */
+    private fun nextToWatch(s: Show): Episode? {
+        val resume = getSharedPreferences("resume", MODE_PRIVATE)
+        val lastCode = getSharedPreferences("series", MODE_PRIVATE).getInt("p:${s.key}", 0)
+        val watched = watchedKeys()
+        val lastWatched = maxOf(
+            episodes.indexOfLast { it.watched || epKey(it) in watched },
+            if (lastCode > 0) episodes.indexOfLast { Episodes.code(it) <= lastCode } else -1,
+        )
+        val inProgress = episodes.indexOfLast { resume.getLong(epKey(it), 0L) > 0 || it.offsetMs > 0 }
+        val idx = when {
+            inProgress >= 0 && inProgress > lastWatched -> inProgress
+            lastWatched >= 0 -> (lastWatched + 1).coerceAtMost(episodes.lastIndex)
+            else -> return null
+        }
+        return episodes[idx]
+    }
+
+    private fun showSeason(pos: Int, focus: Episode? = null) {
         val season = seasons.getOrNull(pos) ?: return
-        episodeAdapter.submit(episodes.filter { it.season == season })
-        episodesView.scrollToPosition(0)
+        val list = episodes.filter { it.season == season }
+        episodeAdapter.submit(list)
+        val idx = focus?.let { list.indexOf(it) }?.takeIf { it >= 0 } ?: 0
+        val lm = episodesView.layoutManager as LinearLayoutManager
+        lm.scrollToPositionWithOffset(idx, (24 * resources.displayMetrics.density).toInt())
+        // Dejar el foco del mando en ese capítulo (no al cambiar de temporada con las pastillas)
+        if (focus != null) episodesView.post {
+            episodesView.post { episodesView.findViewHolderForAdapterPosition(idx)?.itemView?.requestFocus() }
+        }
     }
 
     private fun pickSource(ep: Episode) {

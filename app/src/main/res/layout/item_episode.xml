@@ -1,21 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
+    android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:background="@drawable/bg_item"
+    android:background="@drawable/bg_poster"
     android:clickable="true"
     android:focusable="true"
-    android:gravity="center_vertical"
-    android:orientation="horizontal"
-    android:paddingStart="8dp"
-    android:paddingTop="8dp"
-    android:paddingEnd="12dp"
-    android:paddingBottom="8dp">
+    android:orientation="vertical"
+    android:padding="6dp">
 
     <FrameLayout
         android:id="@+id/thumbBox"
-        android:layout_width="160dp"
-        android:layout_height="90dp"
+        android:layout_width="240dp"
+        android:layout_height="135dp"
         android:background="@drawable/bg_logo">
 
         <TextView
@@ -24,7 +20,7 @@
             android:layout_height="match_parent"
             android:gravity="center"
             android:textColor="@color/muted"
-            android:textSize="22sp"
+            android:textSize="26sp"
             android:textStyle="bold" />
 
         <ImageView
@@ -40,7 +36,7 @@
             android:layout_width="22dp"
             android:layout_height="22dp"
             android:layout_gravity="top|end"
-            android:layout_margin="5dp"
+            android:layout_margin="6dp"
             android:background="@drawable/bg_seen"
             android:gravity="center"
             android:text="✓"
@@ -53,7 +49,7 @@
         <FrameLayout
             android:id="@+id/progressTrack"
             android:layout_width="match_parent"
-            android:layout_height="3dp"
+            android:layout_height="4dp"
             android:layout_gravity="bottom"
             android:background="#80000000"
             android:visibility="gone">
@@ -66,39 +62,33 @@
         </FrameLayout>
     </FrameLayout>
 
-    <LinearLayout
-        android:layout_width="0dp"
+    <TextView
+        android:id="@+id/title"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginStart="14dp"
-        android:layout_weight="1"
-        android:orientation="vertical">
+        android:layout_marginTop="8dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/text"
+        android:textSize="15sp"
+        android:textStyle="bold" />
 
-        <TextView
-            android:id="@+id/title"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:ellipsize="end"
-            android:maxLines="1"
-            android:textColor="@color/text"
-            android:textSize="15sp"
-            android:textStyle="bold" />
+    <TextView
+        android:id="@+id/badge"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:maxLines="1"
+        android:textColor="@color/accent"
+        android:textSize="12sp" />
 
-        <TextView
-            android:id="@+id/summary"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:ellipsize="end"
-            android:maxLines="2"
-            android:textColor="@color/muted"
-            android:textSize="13sp" />
-
-        <TextView
-            android:id="@+id/badge"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:textColor="@color/accent"
-            android:textSize="12sp" />
-    </LinearLayout>
+    <TextView
+        android:id="@+id/summary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:ellipsize="end"
+        android:maxLines="3"
+        android:textColor="@color/muted"
+        android:textSize="13sp" />
 </LinearLayout>

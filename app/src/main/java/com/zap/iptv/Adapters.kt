@@ -67,6 +67,7 @@ class ChannelAdapter(
         h.initial.visibility = View.VISIBLE
         if (ch.logo != null) {
             h.logo.load(ch.logo) {
+                stableCache(ch.logo)
                 crossfade(false)
                 size(160)
                 listener(onSuccess = { _, _ -> h.initial.visibility = View.INVISIBLE })
@@ -201,6 +202,7 @@ class PosterAdapter(
         val image = if (landscape) it.art ?: it.poster else it.poster
         if (image != null) {
             h.img.load(image) {
+                stableCache(image)
                 crossfade(false)
                 if (landscape) size(480, 270) else size(300, 450)
                 listener(onSuccess = { _, _ -> h.ph.visibility = View.INVISIBLE })
@@ -247,13 +249,15 @@ class EpisodeAdapter(
 
         init {
             thumbBox.clipToOutline = true
-            // Imagen más grande en la tele que en el móvil
+            // Tarjeta horizontal, más grande en la tele que en el móvil
             val dm = v.resources.displayMetrics
-            val wDp = if (dm.widthPixels / dm.density > 700) 200 else 128
+            val wDp = if (dm.widthPixels / dm.density > 700) 260 else 200
+            val w = (wDp * dm.density).toInt()
             thumbBox.layoutParams = thumbBox.layoutParams.apply {
-                width = (wDp * dm.density).toInt()
-                height = (wDp * 9 / 16 * dm.density).toInt()
+                width = w
+                height = w * 9 / 16
             }
+            v.layoutParams = v.layoutParams.apply { width = w + v.paddingLeft + v.paddingRight }
             v.setOnClickListener {
                 val p = bindingAdapterPosition
                 if (p != RecyclerView.NO_POSITION) onClick(items[p])
@@ -290,6 +294,7 @@ class EpisodeAdapter(
         h.num.visibility = View.VISIBLE
         if (e.thumb != null) {
             h.thumb.load(e.thumb) {
+                stableCache(e.thumb)
                 crossfade(false)
                 size(400, 225)
                 listener(onSuccess = { _, _ -> h.num.visibility = View.INVISIBLE })
@@ -383,6 +388,7 @@ class CastAdapter(private val people: List<Person>) : RecyclerView.Adapter<CastA
         h.initials.visibility = View.VISIBLE
         if (p.photo != null) {
             h.photo.load(p.photo) {
+                stableCache(p.photo)
                 crossfade(false)
                 size(200)
                 listener(onSuccess = { _, _ -> h.initials.visibility = View.INVISIBLE })

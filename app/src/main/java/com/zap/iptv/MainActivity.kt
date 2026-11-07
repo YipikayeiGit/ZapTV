@@ -153,22 +153,35 @@ class MainActivity : AppCompatActivity() {
         val handled = savedInstanceState == null && handleIntent(intent)
         lifecycleScope.launch {
             val src = prefs.getString(KEY_SRC, null)
+            // Cada fuente se muestra en cuanto está lista, sin esperar a la otra
             val iptvJob = async(Dispatchers.IO) {
                 if (handled) null else runCatching { Iptv.loadCached(this@MainActivity, src) }.getOrNull()
             }
             val plexJob = async(Dispatchers.IO) { runCatching { Plex.loadCached(this@MainActivity) }.getOrNull() }
+            launch {
+                plexJob.await()?.let {
+                    Catalog.plex = it
+                    rebuild()
+                }
+            }
+            launch {
+                iptvJob.await()?.let {
+                    Catalog.iptv = it
+                    rebuild()
+                }
+            }
             val iptv = iptvJob.await()
             val plex = plexJob.await()
-            if (iptv != null) Catalog.iptv = iptv
-            if (plex != null) Catalog.plex = plex
-            rebuild()
+            if (iptv == null && plex == null) rebuild()
+
             val now = System.currentTimeMillis()
-            if (!handled && src != null && (iptv == null || now - prefs.getLong("iptv_time", 0) > STALE)) {
-                refreshIptv(src, silent = iptv != null)
-            }
-            if (Plex.loggedIn && (plex == null || now - prefs.getLong("plex_time", 0) > STALE)) {
-                refreshPlex(silent = plex != null)
-            }
+            val needIptv = !handled && src != null && (iptv == null || now - prefs.getLong("iptv_time", 0) > STALE)
+            val needPlex = Plex.loggedIn && (plex == null || now - prefs.getLong("plex_time", 0) > STALE)
+            // Si ya hay algo que enseñar, la actualización por internet espera un poco
+            // para no competir con las carátulas de la primera pantalla
+            if ((needIptv && iptv != null) || (needPlex && plex != null)) delay(12_000)
+            if (needIptv && src != null) refreshIptv(src, silent = iptv != null)
+            if (needPlex) refreshPlex(silent = plex != null)
             if (now - prefs.getLong("update_check", 0) > STALE) checkUpdate(manual = false)
         }
     }
@@ -411,7 +424,7 @@ class MainActivity : AppCompatActivity() {
                             else -> src
                         }
                     }
-                    val grid = if (shows) landAdapter else posterAdapter
+                    val grid = posterAdapter
                     useAdapter(grid)
                     grid.showKind = false
                     grid.submit(res)
@@ -468,13 +481,17 @@ class MainActivity : AppCompatActivity() {
         return super.onKeyUp(keyCode, event)
     }
 
+    private val rebuildLock = Mutex()
+
     private fun rebuild() {
         lifecycleScope.launch {
             try {
-                withContext(Dispatchers.Default) {
-                    Catalog.rebuild()
-                    // Tu "Seguir viendo" de Plex
-                    runCatching { PlexSync.importProgress(this@MainActivity) }
+                rebuildLock.withLock {
+                    withContext(Dispatchers.Default) {
+                        Catalog.rebuild()
+                        // Tu "Seguir viendo" de Plex
+                        runCatching { PlexSync.importProgress(this@MainActivity) }
+                    }
                 }
             } catch (e: OutOfMemoryError) {
                 toast("Sin memoria suficiente para preparar el catálogo")
@@ -497,6 +514,8 @@ class MainActivity : AppCompatActivity() {
         if (newEpisodesJob?.isActive == true) return
         if (System.currentTimeMillis() - Episodes.lastCheck(this) < 2 * 60 * 60 * 1000L) return
         newEpisodesJob = lifecycleScope.launch {
+            // Sin prisa: primero que carguen las imágenes de la pantalla
+            delay(20_000)
             val keys = withContext(Dispatchers.IO) {
                 runCatching { Episodes.checkNew(this@MainActivity, shows) }.getOrNull()
             } ?: return@launch

@@ -1,6 +1,7 @@
 package com.zap.iptv
 
 import android.util.JsonReader
+import coil.request.ImageRequest
 import android.util.JsonToken
 import org.json.JSONObject
 import java.io.BufferedInputStream
@@ -128,4 +129,21 @@ fun forEachFlatObject(file: File, fields: Set<String>, onItem: (Map<String, Stri
     } catch (e: Exception) {
         // JSON roto o cortado: nos quedamos con lo leído hasta ahí
     }
+}
+
+private val HOST = Regex("^https?://[^/]+")
+private val TOKEN = Regex("[&?]X-Plex-Token=[^&]*")
+
+/**
+ * Clave estable para la caché de imágenes: en Plex la dirección del servidor y el token
+ * pueden cambiar, pero la imagen es la misma. Así no se vuelve a descargar.
+ */
+fun imageKey(url: String): String =
+    if ("X-Plex-Token" in url) url.replace(HOST, "plex").replace(TOKEN, "") else url
+
+fun ImageRequest.Builder.stableCache(url: String?) {
+    if (url == null) return
+    val k = imageKey(url)
+    memoryCacheKey(k)
+    diskCacheKey(k)
 }
