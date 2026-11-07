@@ -522,7 +522,10 @@ object Plex {
                         else -> null
                     }
                     if (k != null && mime != null) {
-                        subs += Sub(withToken("${s.uri}$k", s.token), lang?.lowercase(), st.str("displayTitle"), mime)
+                        subs += Sub(
+                            withToken("${s.uri}$k", s.token), lang?.lowercase(), st.str("displayTitle"), mime,
+                            forced = st.optBoolean("forced") || st.optInt("forced") == 1,
+                        )
                     }
                 }
             }

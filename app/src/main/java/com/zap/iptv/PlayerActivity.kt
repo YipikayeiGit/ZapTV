@@ -183,6 +183,7 @@ class PlayerActivity : AppCompatActivity() {
                 .setMimeType(s.mime)
                 .setLanguage(s.lang)
                 .setLabel(s.label)
+                .setSelectionFlags(if (s.forced) C.SELECTION_FLAG_FORCED else 0)
                 .build()
         }
         val mi = MediaItem.Builder().setUri(url).setSubtitleConfigurations(subs).apply {
@@ -205,12 +206,17 @@ class PlayerActivity : AppCompatActivity() {
 
         fun choose(type: Int, code: String) {
             val groups = tracks.groups.filter { it.type == type }
-            val alreadyOk = groups.any { g -> (0 until g.length).any { i -> g.isTrackSelected(i) && Languages.matches(g.getTrackFormat(i), code) } }
-            if (alreadyOk) return
-            val best = groups.flatMap { g ->
+            val candidates = groups.flatMap { g ->
                 (0 until g.length).filter { i -> g.isTrackSupported(i) && Languages.matches(g.getTrackFormat(i), code) }
                     .map { i -> g to i }
-            }.minByOrNull { (g, i) -> Languages.penalty(g.getTrackFormat(i)) } ?: return
+            }
+            val best = candidates.minByOrNull { (g, i) -> Languages.penalty(g.getTrackFormat(i)) } ?: return
+            val bestPenalty = Languages.penalty(best.first.getTrackFormat(best.second))
+            // Solo se deja la que eligió el reproductor si es igual de buena (p. ej. no forzada)
+            val alreadyOk = candidates.any { (g, i) ->
+                g.isTrackSelected(i) && Languages.penalty(g.getTrackFormat(i)) == bestPenalty
+            }
+            if (alreadyOk) return
             builder.setTrackTypeDisabled(type, false)
             builder.setOverrideForType(TrackSelectionOverride(best.first.mediaTrackGroup, best.second))
             changed = true

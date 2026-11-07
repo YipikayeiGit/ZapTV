@@ -59,11 +59,13 @@ object Languages {
         return words(f.label).any { it in aliases }
     }
 
+    private val FORCED = setOf("forced", "forzado", "forzados", "forzada", "forzadas", "force", "forces", "forcat", "forcats")
+
     /** Menor es mejor: castellano antes que latino, completos antes que forzados o para sordos. */
     fun penalty(f: Format): Int {
         val w = words(f.label) + words(f.language)
         var p = 0
-        if (f.selectionFlags and C.SELECTION_FLAG_FORCED != 0 || "forced" in w || "forzados" in w) p += 4
+        if (f.selectionFlags and C.SELECTION_FLAG_FORCED != 0 || w.any { it in FORCED }) p += 4
         if ("latino" in w || "latin" in w || "latam" in w || "419" in (f.language ?: "")) p += 2
         if ("sdh" in w || "cc" in w) p += 1
         return p

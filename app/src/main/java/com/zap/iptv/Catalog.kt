@@ -325,7 +325,7 @@ data class Info(
 )
 
 /** Lo que se va a reproducir (compartido con el reproductor). */
-data class Sub(val url: String, val lang: String?, val label: String?, val mime: String)
+data class Sub(val url: String, val lang: String?, val label: String?, val mime: String, val forced: Boolean = false)
 
 data class PlayItem(
     val title: String,
