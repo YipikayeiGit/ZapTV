@@ -3,6 +3,8 @@ package com.zap.iptv
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
+import android.util.JsonReader
+import android.util.JsonToken
 import androidx.media3.common.MimeTypes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -12,6 +14,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
+import java.io.InputStreamReader
 import java.net.URLEncoder
 import java.util.UUID
 
@@ -176,49 +179,155 @@ object Plex {
             if (type != "movie" && type != "show") continue
             // Con varias bibliotecas del mismo tipo, su nombre sirve de categoría ("Infantil", "4K"…)
             val libName = d.str("title")?.takeIf { (if (type == "movie") movieLibs else showLibs) > 1 }
-            val items: JSONArray = (try {
-                JSONObject(
-                    Http.get("${s.uri}/library/sections/${d.optString("key")}/all", headers(s.token), timeout = 120_000)
-                ).optJSONObject("MediaContainer")?.optJSONArray("Metadata")
+            try {
+                readSection(s, d.optString("key")) { x ->
+                    val title = x.title ?: return@readSection
+                    val poster = x.thumb?.let { poster(s, it) }
+                    val rating = (if (x.audienceRating > 0) x.audienceRating else x.rating)
+                        .takeIf { it > 0 }?.toFloat()
+                    val genres = if (libName != null) x.genres + libName else x.genres
+                    val year = x.year.takeIf { it > 0 }
+                    if (type == "movie") {
+                        val label = listOfNotNull("Plex", resLabel(x.resolution), s.name.takeIf { multi }).joinToString(" · ")
+                        movies += Movie(
+                            title, year, poster,
+                            listOf(SourceRef(Origin.PLEX, label, plexServer = s.id, plexKey = x.key)),
+                            x.summary, x.added, rating, genres,
+                        )
+                    } else {
+                        shows += Show(
+                            title, year, poster, x.summary, plex = listOf(PlexRef(s.id, x.key)),
+                            added = x.added, rating = rating, genres = genres,
+                        )
+                    }
+                }
             } catch (e: Exception) {
                 lastError = e
-                null
-            }) ?: continue
-
-            for (j in 0 until items.length()) {
-                val m = items.optJSONObject(j) ?: continue
-                val title = m.str("title") ?: continue
-                val year = m.optInt("year").takeIf { it > 0 }
-                val poster = m.str("thumb")?.let { poster(s, it) }
-                val key = m.optString("ratingKey")
-                val plot = m.str("summary")
-                val added = m.optLong("addedAt")
-                val rating = (m.optDouble("audienceRating").takeIf { !it.isNaN() && it > 0 }
-                    ?: m.optDouble("rating").takeIf { !it.isNaN() && it > 0 })?.toFloat()
-                val genres = buildList {
-                    m.optJSONArray("Genre")?.let { a ->
-                        for (g in 0 until a.length()) a.optJSONObject(g)?.str("tag")?.let { add(it) }
-                    }
-                    libName?.let { add(it) }
-                }
-                if (type == "movie") {
-                    val res = m.optJSONArray("Media")?.optJSONObject(0)?.str("videoResolution")
-                    val label = listOfNotNull("Plex", resLabel(res), s.name.takeIf { multi }).joinToString(" · ")
-                    movies += Movie(
-                        title, year, poster,
-                        listOf(SourceRef(Origin.PLEX, label, plexServer = s.id, plexKey = key)),
-                        plot, added, rating, genres,
-                    )
-                } else {
-                    shows += Show(
-                        title, year, poster, plot, plex = listOf(PlexRef(s.id, key)),
-                        added = added, rating = rating, genres = genres,
-                    )
-                }
             }
         }
         if (movies.isEmpty() && shows.isEmpty()) lastError?.let { throw it }
         return PlexData(listOf(s), movies, shows)
+    }
+
+    /** Lo mínimo que necesitamos de cada elemento de la biblioteca. */
+    private class RawItem {
+        var key = ""
+        var title: String? = null
+        var year = 0
+        var thumb: String? = null
+        var summary: String? = null
+        var added = 0L
+        var audienceRating = 0.0
+        var rating = 0.0
+        var resolution: String? = null
+        val genres = ArrayList<String>(3)
+    }
+
+    /** Recorre una biblioteca de 500 en 500 sin cargar el JSON entero en memoria. */
+    private fun readSection(s: PlexServer, sectionKey: String, onItem: (RawItem) -> Unit) {
+        val page = 500
+        var start = 0
+        while (true) {
+            var total = -1
+            var count = 0
+            val url = "${s.uri}/library/sections/$sectionKey/all" +
+                "?X-Plex-Container-Start=$start&X-Plex-Container-Size=$page"
+            Http.stream(url, headers(s.token), timeout = 120_000) { input ->
+                val r = JsonReader(InputStreamReader(input, Charsets.UTF_8))
+                r.isLenient = true
+                r.beginObject()
+                while (r.hasNext()) {
+                    if (r.nextName() != "MediaContainer" || r.peek() != JsonToken.BEGIN_OBJECT) {
+                        r.skipValue()
+                        continue
+                    }
+                    r.beginObject()
+                    while (r.hasNext()) {
+                        when (r.nextName()) {
+                            "totalSize" -> total = r.numOrZero().toInt()
+                            "Metadata" -> {
+                                if (r.peek() != JsonToken.BEGIN_ARRAY) {
+                                    r.skipValue()
+                                } else {
+                                    r.beginArray()
+                                    while (r.hasNext()) {
+                                        if (r.peek() == JsonToken.BEGIN_OBJECT) {
+                                            onItem(readItem(r))
+                                        } else {
+                                            r.skipValue()
+                                        }
+                                        count++
+                                    }
+                                    r.endArray()
+                                }
+                            }
+                            else -> r.skipValue()
+                        }
+                    }
+                    r.endObject()
+                }
+                r.endObject()
+            }
+            start += page
+            if (count == 0) break
+            if (total >= 0 && start >= total) break
+            if (total < 0 && count < page) break
+        }
+    }
+
+    private fun readItem(r: JsonReader): RawItem {
+        val x = RawItem()
+        r.beginObject()
+        while (r.hasNext()) {
+            when (r.nextName()) {
+                "ratingKey" -> x.key = r.strOrNull() ?: ""
+                "title" -> x.title = r.strOrNull()
+                "year" -> x.year = r.numOrZero().toInt()
+                "thumb" -> x.thumb = r.strOrNull()
+                "summary" -> x.summary = r.strOrNull()?.takeIf { it.isNotBlank() }
+                "addedAt" -> x.added = r.numOrZero().toLong()
+                "audienceRating" -> x.audienceRating = r.numOrZero()
+                "rating" -> x.rating = r.numOrZero()
+                "Genre" -> r.eachObject { name -> if (name == "tag") r.strOrNull()?.let { x.genres += it } else r.skipValue() }
+                "Media" -> r.eachObject { name ->
+                    if (name == "videoResolution" && x.resolution == null) x.resolution = r.strOrNull() else r.skipValue()
+                }
+                else -> r.skipValue()
+            }
+        }
+        r.endObject()
+        return x
+    }
+
+    private fun JsonReader.strOrNull(): String? = when (peek()) {
+        JsonToken.STRING, JsonToken.NUMBER -> nextString()
+        JsonToken.BOOLEAN -> nextBoolean().toString()
+        JsonToken.NULL -> { nextNull(); null }
+        else -> { skipValue(); null }
+    }
+
+    private fun JsonReader.numOrZero(): Double = when (peek()) {
+        JsonToken.NUMBER, JsonToken.STRING -> nextString().toDoubleOrNull() ?: 0.0
+        else -> { skipValue(); 0.0 }
+    }
+
+    /** Recorre un array de objetos llamando a [field] con el nombre de cada campo. */
+    private inline fun JsonReader.eachObject(field: (String) -> Unit) {
+        if (peek() != JsonToken.BEGIN_ARRAY) {
+            skipValue()
+            return
+        }
+        beginArray()
+        while (hasNext()) {
+            if (peek() != JsonToken.BEGIN_OBJECT) {
+                skipValue()
+                continue
+            }
+            beginObject()
+            while (hasNext()) field(nextName())
+            endObject()
+        }
+        endArray()
     }
 
     private fun poster(s: PlexServer, thumb: String): String =

@@ -23,6 +23,10 @@ object Http {
     fun post(url: String, headers: Map<String, String> = emptyMap(), timeout: Int = 20_000): String =
         open("POST", url, headers, timeout) { it.readBytes() }.toString(Charsets.UTF_8)
 
+    /** Lee la respuesta sin cargarla entera en memoria. */
+    fun <T> stream(url: String, headers: Map<String, String> = emptyMap(), timeout: Int = 60_000, body: (InputStream) -> T): T =
+        open("GET", url, headers, timeout, body)
+
     fun download(url: String, file: File, headers: Map<String, String> = emptyMap(), timeout: Int = 90_000) {
         open("GET", url, headers, timeout) { input -> file.outputStream().use { input.copyTo(it) } }
     }
@@ -70,27 +74,24 @@ fun JSONObject.str(name: String): String? =
     if (isNull(name)) null else optString(name).takeIf { it.isNotEmpty() }
 
 /**
- * Lee un array JSON enorme de objetos sin cargarlo entero en memoria,
- * quedándose solo con los campos indicados (como texto).
+ * Recorre un array JSON enorme de objetos sin cargarlo en memoria, entregando
+ * solo los campos indicados (como texto). El mapa se reutiliza: no guardarlo.
  */
-fun readFlatObjects(file: File, fields: Set<String>): List<Map<String, String>> {
-    if (!file.exists()) return emptyList()
-    return try {
-        JsonReader(InputStreamReader(BufferedInputStream(FileInputStream(file)), Charsets.UTF_8)).use { r ->
+fun forEachFlatObject(file: File, fields: Set<String>, onItem: (Map<String, String>) -> Unit) {
+    if (!file.exists()) return
+    try {
+        JsonReader(InputStreamReader(BufferedInputStream(FileInputStream(file), 64 * 1024), Charsets.UTF_8)).use { r ->
             r.isLenient = true
-            val out = ArrayList<Map<String, String>>()
-            if (r.peek() != JsonToken.BEGIN_ARRAY) {
-                r.skipValue()
-                return@use out
-            }
+            if (r.peek() != JsonToken.BEGIN_ARRAY) return
             r.beginArray()
+            val m = HashMap<String, String>(16)
             while (r.hasNext()) {
                 if (r.peek() != JsonToken.BEGIN_OBJECT) {
                     r.skipValue()
                     continue
                 }
+                m.clear()
                 r.beginObject()
-                val m = HashMap<String, String>(8)
                 while (r.hasNext()) {
                     val name = r.nextName()
                     if (name in fields) {
@@ -104,12 +105,11 @@ fun readFlatObjects(file: File, fields: Set<String>): List<Map<String, String>> 
                     }
                 }
                 r.endObject()
-                out += m
+                onItem(m)
             }
             r.endArray()
-            out
         }
     } catch (e: Exception) {
-        emptyList()
+        // JSON roto o cortado: nos quedamos con lo leído hasta ahí
     }
 }

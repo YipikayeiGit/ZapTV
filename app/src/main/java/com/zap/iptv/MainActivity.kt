@@ -29,6 +29,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
@@ -53,6 +55,7 @@ class MainActivity : AppCompatActivity() {
     private var typingJob: Job? = null
     private var filterJob: Job? = null
     private var busy = 0
+    private val loadLock = Mutex()
 
     private lateinit var tabs: Map<Tab, TextView>
     private lateinit var chips: RecyclerView
@@ -120,6 +123,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         selectTab(tab)
+        showLastCrash()
 
         // Arranque instantáneo con lo guardado y actualización en segundo plano
         val handled = savedInstanceState == null && handleIntent(intent)
@@ -141,6 +145,18 @@ class MainActivity : AppCompatActivity() {
             }
             if (now - prefs.getLong("update_check", 0) > STALE) checkUpdate(manual = false)
         }
+    }
+
+    /** Si la app se cerró la última vez, enseñar el motivo (para poder arreglarlo). */
+    private fun showLastCrash() {
+        val text = ZapApp.takeCrash(application) ?: return
+        // Lo importante está en las primeras líneas
+        val short = text.lineSequence().take(18).joinToString("\n")
+        MaterialAlertDialogBuilder(this)
+            .setTitle("La app se cerró inesperadamente")
+            .setMessage("Haz una foto de esta pantalla para poder arreglarlo:\n\n$short")
+            .setPositiveButton("Entendido", null)
+            .show()
     }
 
     // ---------- Pestañas y filtros ----------
@@ -304,7 +320,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun rebuild() {
         lifecycleScope.launch {
-            withContext(Dispatchers.Default) { Catalog.rebuild() }
+            try {
+                withContext(Dispatchers.Default) { Catalog.rebuild() }
+            } catch (e: OutOfMemoryError) {
+                toast("Sin memoria suficiente para preparar el catálogo")
+                return@launch
+            }
             renderChips()
             refresh()
         }
@@ -352,13 +373,17 @@ class MainActivity : AppCompatActivity() {
         setBusy(1)
         lifecycleScope.launch {
             try {
-                val data = withContext(Dispatchers.IO) { Iptv.refresh(this@MainActivity, src, preloaded) }
+                val data = loadLock.withLock {
+                    withContext(Dispatchers.IO) { Iptv.refresh(this@MainActivity, src, preloaded) }
+                }
                 Catalog.iptv = data
                 prefs.edit { putLong("iptv_time", System.currentTimeMillis()) }
                 rebuild()
                 if (!silent) toast("IPTV: ${data.live.size} canales · ${data.movies.size} pelis · ${data.shows.size} series")
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: OutOfMemoryError) {
+                toast("La lista es demasiado grande para la memoria de este dispositivo")
             } catch (e: Exception) {
                 toast("No se pudo cargar la lista: ${e.message ?: e.javaClass.simpleName}")
             } finally {
@@ -371,7 +396,9 @@ class MainActivity : AppCompatActivity() {
         setBusy(1)
         lifecycleScope.launch {
             try {
-                val data = withContext(Dispatchers.IO) { Plex.refresh(this@MainActivity) }
+                val data = loadLock.withLock {
+                    withContext(Dispatchers.IO) { Plex.refresh(this@MainActivity) }
+                }
                 Catalog.plex = data
                 prefs.edit { putLong("plex_time", System.currentTimeMillis()) }
                 rebuild()
@@ -387,6 +414,8 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: OutOfMemoryError) {
+                toast("La biblioteca de Plex es demasiado grande para la memoria de este dispositivo")
             } catch (e: Exception) {
                 if (e is HttpException && e.code == 401) {
                     Plex.logout(this@MainActivity)
