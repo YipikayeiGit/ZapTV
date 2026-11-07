@@ -529,7 +529,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 val data = loadLock.withLock {
-                    withContext(Dispatchers.IO) { Plex.refresh(this@MainActivity) }
+                    withContext(Dispatchers.IO) { Plex.refresh(this@MainActivity, Catalog.plex) }
                 }
                 Catalog.plex = data
                 prefs.edit { putLong("plex_time", System.currentTimeMillis()) }

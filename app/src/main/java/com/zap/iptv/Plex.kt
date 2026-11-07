@@ -11,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
@@ -88,8 +89,13 @@ object Plex {
         get() = prefs.getString("plex_status", null) ?: "Todavía no se ha cargado Plex."
         private set(v) = prefs.edit().putString("plex_status", v).apply()
 
-    suspend fun refresh(ctx: Context): PlexData = coroutineScope {
+    /**
+     * [previous] = lo que ya teníamos: si un servidor no responde ahora,
+     * se siguen mostrando sus pelis y series guardadas en vez de perderlas.
+     */
+    suspend fun refresh(ctx: Context, previous: PlexData = PlexData.EMPTY): PlexData = coroutineScope {
         val tok = token ?: return@coroutineScope PlexData.EMPTY
+        val oldServers = previous.servers.associateBy { it.id }
         val res = JSONArray(
             Http.get("https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1&includeIPv6=1", headers(tok))
         )
@@ -98,7 +104,9 @@ object Plex {
             .filter { it.optString("provides").contains("server") }
 
         val watchJob = async(Dispatchers.IO) { runCatching { watchlist(tok) } }
-        val conns = candidates.map { r -> async(Dispatchers.IO) { r to connect(r, tok) } }.awaitAll()
+        val conns = candidates.map { r ->
+            async(Dispatchers.IO) { r to connect(r, tok, oldServers[r.optString("clientIdentifier")]?.uri) }
+        }.awaitAll()
         val found = conns.mapNotNull { it.second.first }
         servers = found.associateBy { it.id }
         val multi = found.size > 1
@@ -108,7 +116,17 @@ object Plex {
                 val shared = if (r.optBoolean("owned")) "" else " (compartido)"
                 val name = r.optString("name").ifEmpty { "Servidor" } + shared
                 val s = c.first
-                if (s == null) {
+                val old = oldServers[r.optString("clientIdentifier")]
+                if (s == null && old != null) {
+                    // No responde ahora: conservamos lo guardado de este servidor
+                    val keep = PlexData(
+                        listOf(old),
+                        previous.movies.filter { m -> m.sources.any { it.plexServer == old.id } },
+                        previous.shows.filter { sh -> sh.plex.any { it.server == old.id } },
+                        progress = previous.progress.filter { it.server == old.id },
+                    )
+                    keep to "• $name: ${c.second}\n   Se muestran sus ${keep.movies.size} pelis y ${keep.shows.size} series guardadas."
+                } else if (s == null) {
                     PlexData.EMPTY to "• $name: ${c.second}"
                 } else {
                     try {
@@ -123,6 +141,8 @@ object Plex {
             }
         }.awaitAll()
 
+        // Servidores para reproducir: los conectados ahora y los que se conservan de antes
+        servers = parts.flatMap { it.first.servers }.associateBy { it.id }
         val watch = watchJob.await()
         status = buildString {
             append("Cuenta: ").append(user ?: "conectada").append('\n')
@@ -138,7 +158,7 @@ object Plex {
         }
 
         val data = PlexData(
-            found,
+            parts.flatMap { it.first.servers },
             parts.flatMap { it.first.movies },
             parts.flatMap { it.first.shows },
             watch.getOrDefault(emptyList()),
@@ -242,18 +262,30 @@ object Plex {
      * Prueba todas las direcciones del servidor a la vez y se queda con la mejor:
      * local, luego remota directa y por último el relay de Plex.
      */
-    private suspend fun connect(r: JSONObject, fallbackToken: String): Pair<PlexServer?, String> = coroutineScope {
+    private suspend fun connect(r: JSONObject, fallbackToken: String, lastUri: String?): Pair<PlexServer?, String> = coroutineScope {
         val tok = r.str("accessToken") ?: fallbackToken
         val conns = r.optJSONArray("connections")
-        val list = if (conns == null) emptyList() else (0 until conns.length()).mapNotNull { conns.optJSONObject(it) }
+        val list = (if (conns == null) emptyList() else (0 until conns.length()).mapNotNull { conns.optJSONObject(it) })
+            .toMutableList()
+        // La última dirección que funcionó, por si Plex no la anuncia ahora
+        if (lastUri != null && list.none { it.str("uri") == lastUri }) {
+            list += JSONObject().put("uri", lastUri).put("local", false).put("relay", false)
+        }
         if (list.isEmpty()) return@coroutineScope (null to "el servidor no publica ninguna dirección (¿está apagado?)")
 
-        val ok = list.map { c ->
+        suspend fun probe(timeout: Int) = list.map { c ->
             async(Dispatchers.IO) {
                 val uri = c.str("uri") ?: return@async null
-                if (runCatching { Http.get("$uri/identity", headers(tok), timeout = 7_000) }.isSuccess) c else null
+                if (runCatching { Http.get("$uri/identity", headers(tok), timeout = timeout) }.isSuccess) c else null
             }
         }.awaitAll().filterNotNull()
+
+        var ok = probe(10_000)
+        if (ok.isEmpty()) {
+            // Segundo intento, con más paciencia (servidor ocupado o despertándose)
+            delay(2_000)
+            ok = probe(20_000)
+        }
 
         val best = ok.minByOrNull { c ->
             when {
@@ -261,7 +293,7 @@ object Plex {
                 c.optBoolean("local") -> 0
                 else -> 1
             }
-        } ?: return@coroutineScope (null to "sin conexión (${list.size} direcciones probadas). Puede que el servidor esté apagado o sin acceso remoto.")
+        } ?: return@coroutineScope (null to "no responde ahora (${list.size} direcciones probadas, 2 intentos). Puede que el servidor esté apagado, reiniciándose o sin internet.")
 
         val kind = when {
             best.optBoolean("relay") -> "relay de Plex, calidad limitada"
