@@ -329,7 +329,20 @@ object Search {
 }
 
 /** Ficha ampliada de una película (de Plex o del proveedor IPTV). */
-data class Person(val name: String, val role: String?, val photo: String?)
+/** Actor o director. [id] y [server]/[section] permiten buscar sus otras películas en Plex. */
+data class Person(
+    val name: String,
+    val role: String?,
+    val photo: String?,
+    val id: String? = null,
+    /** "actor", "director" o "writer" (como los filtros de Plex). */
+    val kind: String = "actor",
+    val server: String? = null,
+    val section: String? = null,
+)
+
+/** Tráiler: un vídeo de Plex o un vídeo de YouTube. */
+data class Trailer(val title: String, val thumb: String?, val url: String? = null, val youtube: String? = null)
 
 data class Info(
     val tagline: String? = null,
@@ -344,6 +357,9 @@ data class Info(
     val genres: List<String> = emptyList(),
     /** Títulos que Plex considera parecidos. */
     val similar: List<String> = emptyList(),
+    /** Directores con su id de Plex (para pulsar y ver sus películas). */
+    val directorPeople: List<Person> = emptyList(),
+    val trailers: List<Trailer> = emptyList(),
 )
 
 /** Lo que se va a reproducir (compartido con el reproductor). */
@@ -365,6 +381,7 @@ object Playback {
     var live: List<Channel> = emptyList()
     var item: PlayItem? = null
     var selected: CatalogItem? = null
+    var person: Person? = null
 }
 
 object Merge {

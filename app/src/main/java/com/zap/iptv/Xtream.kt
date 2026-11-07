@@ -175,7 +175,21 @@ object Xtream {
             directors = list("director"),
             cast = list("cast", "actors").take(20).map { Person(it, null, null) },
             genres = list("genre"),
+            trailers = youtube(i.str("youtube_trailer"))?.let {
+                listOf(Trailer("Tráiler (YouTube)", "https://img.youtube.com/vi/$it/hqdefault.jpg", youtube = it))
+            } ?: emptyList(),
         )
+    }
+
+    /** El proveedor da el tráiler como id de YouTube o como enlace completo. */
+    private fun youtube(v: String?): String? {
+        val t = v?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val id = when {
+            "v=" in t -> t.substringAfter("v=").substringBefore('&')
+            "youtu.be/" in t -> t.substringAfter("youtu.be/").substringBefore('?')
+            else -> t
+        }
+        return id.takeIf { it.length in 6..20 && it.all { c -> c.isLetterOrDigit() || c == '-' || c == '_' } }
     }
 
     /** El id de una peli Xtream sale de su enlace: …/movie/usuario/clave/ID.ext */

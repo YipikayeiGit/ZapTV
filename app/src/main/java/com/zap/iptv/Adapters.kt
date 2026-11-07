@@ -66,7 +66,7 @@ class ChannelAdapter(
         h.initial.text = ch.name.firstOrNull()?.uppercase() ?: ""
         h.initial.visibility = View.VISIBLE
         if (ch.logo != null) {
-            h.logo.load(ch.logo) {
+            h.logo.load(Plex.fixUrl(ch.logo)) {
                 stableCache(ch.logo)
                 crossfade(false)
                 size(160)
@@ -201,7 +201,7 @@ class PosterAdapter(
         h.ph.visibility = View.VISIBLE
         val image = if (landscape) it.art ?: it.poster else it.poster
         if (image != null) {
-            h.img.load(image) {
+            h.img.load(Plex.fixUrl(image)) {
                 stableCache(image)
                 crossfade(false)
                 if (landscape) size(480, 270) else size(300, 450)
@@ -293,7 +293,7 @@ class EpisodeAdapter(
         h.thumb.alpha = if (watched) 0.6f else 1f
         h.num.visibility = View.VISIBLE
         if (e.thumb != null) {
-            h.thumb.load(e.thumb) {
+            h.thumb.load(Plex.fixUrl(e.thumb)) {
                 stableCache(e.thumb)
                 crossfade(false)
                 size(400, 225)
@@ -363,7 +363,10 @@ class RowsAdapter(private val onClick: (CatalogItem) -> Unit) :
 }
 
 /** Reparto: foto redonda, nombre y personaje. */
-class CastAdapter(private val people: List<Person>) : RecyclerView.Adapter<CastAdapter.VH>() {
+class CastAdapter(
+    private val people: List<Person>,
+    private val onClick: (Person) -> Unit = {},
+) : RecyclerView.Adapter<CastAdapter.VH>() {
 
     inner class VH(v: View) : RecyclerView.ViewHolder(v) {
         val photo: ImageView = v.findViewById(R.id.photo)
@@ -373,6 +376,11 @@ class CastAdapter(private val people: List<Person>) : RecyclerView.Adapter<CastA
 
         init {
             v.findViewById<View>(R.id.photoBox).clipToOutline = true
+            v.isClickable = true
+            v.setOnClickListener {
+                val p = bindingAdapterPosition
+                if (p != RecyclerView.NO_POSITION) onClick(people[p])
+            }
         }
     }
 
@@ -387,7 +395,7 @@ class CastAdapter(private val people: List<Person>) : RecyclerView.Adapter<CastA
             .joinToString("") { it.first().uppercase() }
         h.initials.visibility = View.VISIBLE
         if (p.photo != null) {
-            h.photo.load(p.photo) {
+            h.photo.load(Plex.fixUrl(p.photo)) {
                 stableCache(p.photo)
                 crossfade(false)
                 size(200)
@@ -400,4 +408,44 @@ class CastAdapter(private val people: List<Person>) : RecyclerView.Adapter<CastA
     }
 
     override fun getItemCount() = people.size
+}
+
+/** Tráileres de una película. */
+class TrailerAdapter(
+    private val trailers: List<Trailer>,
+    private val onClick: (Trailer) -> Unit,
+) : RecyclerView.Adapter<TrailerAdapter.VH>() {
+
+    inner class VH(v: View) : RecyclerView.ViewHolder(v) {
+        val thumb: ImageView = v.findViewById(R.id.thumb)
+        val title: TextView = v.findViewById(R.id.title)
+
+        init {
+            v.findViewById<View>(R.id.box).clipToOutline = true
+            v.setOnClickListener {
+                val p = bindingAdapterPosition
+                if (p != RecyclerView.NO_POSITION) onClick(trailers[p])
+            }
+        }
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
+        VH(LayoutInflater.from(parent.context).inflate(R.layout.item_trailer, parent, false))
+
+    override fun onBindViewHolder(h: VH, position: Int) {
+        val t = trailers[position]
+        h.title.text = t.title
+        if (t.thumb != null) {
+            h.thumb.load(Plex.fixUrl(t.thumb)) {
+                stableCache(t.thumb)
+                crossfade(false)
+                size(440, 248)
+            }
+        } else {
+            h.thumb.dispose()
+            h.thumb.setImageDrawable(null)
+        }
+    }
+
+    override fun getItemCount() = trailers.size
 }

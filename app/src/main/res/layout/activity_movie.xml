@@ -97,10 +97,22 @@
         <TextView
             android:id="@+id/castTitle"
             style="@style/SectionTitle"
-            android:text="Reparto" />
+            android:text="Dirección y reparto" />
 
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/cast"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:clipToPadding="false"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/trailersTitle"
+            style="@style/SectionTitle"
+            android:text="Tráileres" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/trailers"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:clipToPadding="false"

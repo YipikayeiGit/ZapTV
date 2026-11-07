@@ -13,7 +13,12 @@ object Episodes {
     suspend fun load(ctx: Context, show: Show): List<Episode> = coroutineScope {
         val acc = Xtream.Account.parse(ctx.getSharedPreferences("zap", Context.MODE_PRIVATE).getString("src", null))
         val plex = show.plex.map { ref ->
-            async(Dispatchers.IO) { runCatching { Plex.episodes(ref) }.getOrDefault(emptyList()) }
+            async(Dispatchers.IO) {
+                runCatching {
+                    Plex.ensure(ref.server)
+                    Plex.episodes(ref)
+                }.getOrDefault(emptyList())
+            }
         }
         val xt: List<Deferred<List<Episode>>> = if (acc == null) emptyList() else show.xtreamIds.map { id ->
             async(Dispatchers.IO) { runCatching { Xtream.episodes(acc, id) }.getOrDefault(emptyList()) }

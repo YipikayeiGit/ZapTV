@@ -162,6 +162,8 @@ class MainActivity : AppCompatActivity() {
                 plexJob.await()?.let {
                     Catalog.plex = it
                     rebuild()
+                    // Dirección actual de los servidores, ya (sin esperar a recargar la biblioteca)
+                    withContext(Dispatchers.IO) { runCatching { Plex.reconnect() } }
                 }
             }
             launch {

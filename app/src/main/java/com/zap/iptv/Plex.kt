@@ -12,6 +12,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
@@ -579,7 +580,7 @@ object Plex {
     /** Pide a Plex el archivo, idiomas y subtítulos de una peli o episodio. */
     fun details(serverId: String, key: String): Details {
         val s = servers[serverId] ?: throw IOException("servidor Plex no disponible")
-        val m = JSONObject(Http.get("${s.uri}/library/metadata/$key", headers(s.token)))
+        val m = JSONObject(Http.get("${s.uri}/library/metadata/$key?includeExtras=1", headers(s.token)))
             .getJSONObject("MediaContainer").getJSONArray("Metadata").getJSONObject(0)
         val media = m.optJSONArray("Media")?.optJSONObject(0) ?: throw IOException("sin vídeo")
         val part = media.optJSONArray("Part")?.optJSONObject(0) ?: throw IOException("sin vídeo")
@@ -628,14 +629,36 @@ object Plex {
     }
 
     /** Director, guion, reparto, duración… como en la ficha de Plex. */
-    private fun info(s: PlexServer, m: JSONObject): Info {
-        val roles = m.optJSONArray("Role")
-        val cast = if (roles == null) emptyList() else (0 until roles.length()).mapNotNull { i ->
-            val r = roles.optJSONObject(i) ?: return@mapNotNull null
+    private fun people(s: PlexServer, m: JSONObject, field: String, kind: String): List<Person> {
+        val a = m.optJSONArray(field) ?: return emptyList()
+        val section = m.optString("librarySectionID").takeIf { it.isNotEmpty() }
+        return (0 until a.length()).mapNotNull { i ->
+            val r = a.optJSONObject(i) ?: return@mapNotNull null
             val name = r.str("tag") ?: return@mapNotNull null
             val photo = r.str("thumb")?.let { if (it.startsWith("/")) withToken("${s.uri}$it", s.token) else it }
-            Person(name, r.str("role"), photo)
+            Person(name, r.str("role"), photo, r.str("id"), kind, s.id, section)
         }
+    }
+
+    /** Tráileres que tiene el servidor para esta película. */
+    private fun trailers(s: PlexServer, m: JSONObject): List<Trailer> {
+        val extras = m.optJSONObject("Extras")?.optJSONArray("Metadata") ?: return emptyList()
+        return (0 until extras.length()).mapNotNull { i ->
+            val x = extras.optJSONObject(i) ?: return@mapNotNull null
+            val isTrailer = x.optString("subtype") == "trailer" || x.optInt("extraType") == 1
+            if (!isTrailer) return@mapNotNull null
+            val part = x.optJSONArray("Media")?.optJSONObject(0)?.optJSONArray("Part")?.optJSONObject(0)
+            val key = part?.str("key") ?: return@mapNotNull null
+            Trailer(
+                x.str("title") ?: "Tráiler",
+                x.str("thumb")?.let { still(s, it) },
+                url = if (key.startsWith("http")) key else withToken("${s.uri}$key", s.token),
+            )
+        }
+    }
+
+    private fun info(s: PlexServer, m: JSONObject): Info {
+        val cast = people(s, m, "Role", "actor")
         val rating = (m.optDouble("audienceRating").takeIf { !it.isNaN() && it > 0 }
             ?: m.optDouble("rating").takeIf { !it.isNaN() && it > 0 })?.toFloat()
         return Info(
@@ -650,7 +673,88 @@ object Plex {
             cast = cast,
             genres = tags(m, "Genre"),
             similar = tags(m, "Similar"),
+            directorPeople = people(s, m, "Director", "director"),
+            trailers = trailers(s, m),
         )
+    }
+
+    /** Películas de un actor o director en esa biblioteca de Plex. */
+    fun byPerson(p: Person): List<Movie> {
+        val s = servers[p.server ?: return emptyList()] ?: return emptyList()
+        val section = p.section ?: return emptyList()
+        val id = p.id ?: return emptyList()
+        val j = JSONObject(
+            Http.get("${s.uri}/library/sections/$section/all?type=1&${p.kind}=$id", headers(s.token), timeout = 30_000)
+        )
+        val arr = j.optJSONObject("MediaContainer")?.optJSONArray("Metadata") ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            val m = arr.optJSONObject(i) ?: return@mapNotNull null
+            val title = m.str("title") ?: return@mapNotNull null
+            val res = m.optJSONArray("Media")?.optJSONObject(0)?.str("videoResolution")
+            Movie(
+                title, m.optInt("year").takeIf { it > 0 }, m.str("thumb")?.let { poster(s, it) },
+                listOf(
+                    SourceRef(
+                        Origin.PLEX, listOfNotNull("Plex", resLabel(res)).joinToString(" · "),
+                        plexServer = s.id, plexKey = m.optString("ratingKey"), plexGuid = m.str("guid"),
+                        quality = Quality.fromPlex(res),
+                    )
+                ),
+                m.str("summary"),
+                m.optLong("addedAt"),
+            )
+        }
+    }
+
+    // ---------- Dirección del servidor siempre al día ----------
+
+    private val reconnectLock = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * Comprueba rápido la dirección actual de los servidores (sin recargar la biblioteca).
+     * Los servidores de casa cambian de dirección a menudo; con la antigua todo da timeout.
+     */
+    suspend fun reconnect(): Boolean = reconnectLock.withLock {
+        coroutineScope {
+            val tok = token ?: return@coroutineScope false
+            val res = JSONArray(
+                Http.get("https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1&includeIPv6=1", headers(tok))
+            )
+            val known = servers
+            val found = (0 until res.length())
+                .mapNotNull { res.optJSONObject(it) }
+                .filter { it.optString("provides").contains("server") }
+                .map { r -> async(Dispatchers.IO) { connect(r, tok, known[r.optString("clientIdentifier")]?.uri).first } }
+                .awaitAll()
+                .filterNotNull()
+            if (found.isEmpty()) return@coroutineScope false
+            val changes = found.mapNotNull { f -> known[f.id]?.uri?.takeIf { it != f.uri }?.let { it to f.uri } }
+            if (changes.isNotEmpty()) moved = moved + changes
+            servers = known + found.associateBy { it.id }
+            true
+        }
+    }
+
+    /** El servidor listo para usar: si no responde en su dirección guardada, se busca la nueva. */
+    suspend fun ensure(serverId: String): PlexServer? {
+        val s = servers[serverId]
+        if (s != null && runCatching { Http.get("${s.uri}/identity", headers(s.token), timeout = 5_000) }.isSuccess) {
+            return s
+        }
+        runCatching { reconnect() }
+        return servers[serverId]
+    }
+
+    fun currentServers(): List<PlexServer> = servers.values.toList()
+
+    /** Direcciones antiguas → nuevas, para que las imágenes guardadas sigan cargando. */
+    @Volatile
+    private var moved: Map<String, String> = emptyMap()
+
+    fun fixUrl(url: String?): String? {
+        if (url == null || moved.isEmpty()) return url
+        for ((old, new) in moved) if (url.startsWith(old)) return new + url.substring(old.length)
+        return url
     }
 
     private fun withToken(url: String, token: String) =

@@ -75,7 +75,7 @@ class DetailActivity : AppCompatActivity() {
         val poster = findViewById<ImageView>(R.id.poster)
         poster.clipToOutline = true
         item.poster?.let { url ->
-            poster.load(url) {
+            poster.load(Plex.fixUrl(url)) {
                 crossfade(false)
                 stableCache(url)
             }
@@ -122,7 +122,10 @@ class DetailActivity : AppCompatActivity() {
             if (src.origin != Origin.PLEX) return@forEachIndexed
             lifecycleScope.launch {
                 val d = withContext(Dispatchers.IO) {
-                    runCatching { Plex.details(src.plexServer!!, src.plexKey!!) }.getOrNull()
+                    runCatching {
+                        Plex.ensure(src.plexServer!!)
+                        Plex.details(src.plexServer!!, src.plexKey!!)
+                    }.getOrNull()
                 } ?: return@launch
                 plexDetails[src.plexKey!!] = d
                 buttons[i].text = d.label
@@ -159,7 +162,6 @@ class DetailActivity : AppCompatActivity() {
             }
         }
         val credits = listOfNotNull(
-            info.directors.takeIf { it.isNotEmpty() }?.let { "Dirección: " + it.take(3).joinToString(", ") },
             info.writers.takeIf { it.isNotEmpty() }?.let { "Guion: " + it.take(3).joinToString(", ") },
             info.studio?.let { "Estudio: $it" },
         )
@@ -168,14 +170,27 @@ class DetailActivity : AppCompatActivity() {
             isVisible = credits.isNotEmpty()
         }
 
-        // Reparto
-        if (info.cast.isNotEmpty()) {
+        // Dirección y reparto (se puede pulsar para ver sus otras películas)
+        val people = info.directorPeople.map { it.copy(role = "Dirección") }.ifEmpty {
+            info.directors.map { Person(it, "Dirección", null, kind = "director") }
+        } + info.cast
+        if (people.isNotEmpty()) {
             val castView = findViewById<RecyclerView>(R.id.cast)
             castView.layoutManager = LinearLayoutManager(this, RecyclerView.HORIZONTAL, false)
-            castView.adapter = CastAdapter(info.cast.take(25))
+            castView.adapter = CastAdapter(people.take(30)) { p -> openPerson(p) }
             castView.isFocusable = false
             castView.isVisible = true
             findViewById<View>(R.id.castTitle).isVisible = true
+        }
+
+        // Tráileres
+        if (info.trailers.isNotEmpty()) {
+            val tv = findViewById<RecyclerView>(R.id.trailers)
+            tv.layoutManager = LinearLayoutManager(this, RecyclerView.HORIZONTAL, false)
+            tv.adapter = TrailerAdapter(info.trailers) { t -> playTrailer(m, t) }
+            tv.isFocusable = false
+            tv.isVisible = true
+            findViewById<View>(R.id.trailersTitle).isVisible = true
         }
 
         // Más como esta: las que sugiere Plex y, después, las de géneros parecidos
@@ -215,6 +230,33 @@ class DetailActivity : AppCompatActivity() {
                 .forEach { out += it.first }
         }
         return out.toList()
+    }
+
+    private fun openPerson(p: Person) {
+        if (p.id == null || p.server == null) {
+            Toast.makeText(this, "Solo se pueden ver las películas de ${p.name} en títulos de Plex", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Playback.person = p
+        startActivity(Intent(this, PersonActivity::class.java))
+    }
+
+    private fun playTrailer(m: Movie, t: Trailer) {
+        val yt = t.youtube
+        if (yt != null) {
+            // Tráiler de YouTube: se abre con la app de YouTube del dispositivo
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.youtube.com/watch?v=$yt")))
+            } catch (e: Exception) {
+                Toast.makeText(this, "Instala la app de YouTube para ver este tráiler", Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+        val url = Plex.fixUrl(t.url) ?: return
+        Playback.item = PlayItem("${m.title} · ${t.title}", url)
+        startActivity(
+            Intent(this, PlayerActivity::class.java).putExtra(PlayerActivity.EXTRA_MODE, PlayerActivity.MODE_VOD)
+        )
     }
 
     private fun openOther(other: CatalogItem) {
@@ -429,7 +471,9 @@ class DetailActivity : AppCompatActivity() {
                     if (src.origin == Origin.IPTV) {
                         PlayItem(title, src.url!!, resumeKey = resumeKey, fromStart = fromStart)
                     } else {
-                        val d = plexDetails[src.plexKey!!] ?: Plex.details(src.plexServer!!, src.plexKey!!)
+                        // Comprobar que el servidor responde (o buscar su dirección nueva) antes de abrir
+                        Plex.ensure(src.plexServer!!) ?: throw IOException("el servidor de Plex no responde ahora")
+                        val d = Plex.details(src.plexServer!!, src.plexKey!!)
                         PlayItem(
                             title, d.url, d.subs, resumeKey = resumeKey, fromStart = fromStart,
                             plexServer = src.plexServer, plexKey = src.plexKey,
