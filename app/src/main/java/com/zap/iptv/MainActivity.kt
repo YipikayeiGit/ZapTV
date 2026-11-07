@@ -36,11 +36,11 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
 
-    private enum class Tab { LIVE, MOVIES, SHOWS }
+    private enum class Tab { HOME, MOVIES, SHOWS, WATCH, LIVE }
 
     private val prefs by lazy { getSharedPreferences("zap", MODE_PRIVATE) }
 
-    private var tab = Tab.LIVE
+    private var tab = Tab.HOME
     /** Categorías del panel lateral: null = Todos, FAV = Favoritos. */
     private var sideKeys: List<String?> = emptyList()
     private var liveGroup: String? = null
@@ -95,9 +95,11 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         tabs = mapOf(
-            Tab.LIVE to findViewById(R.id.tabLive),
+            Tab.HOME to findViewById(R.id.tabHome),
             Tab.MOVIES to findViewById(R.id.tabMovies),
             Tab.SHOWS to findViewById(R.id.tabShows),
+            Tab.WATCH to findViewById(R.id.tabWatch),
+            Tab.LIVE to findViewById(R.id.tabLive),
         )
         chips = findViewById(R.id.chips)
         side = findViewById(R.id.side)
@@ -125,7 +127,7 @@ class MainActivity : AppCompatActivity() {
         content.setHasFixedSize(true)
         content.setItemViewCacheSize(24)
 
-        tab = runCatching { Tab.valueOf(prefs.getString("tab", "MOVIES")!!) }.getOrDefault(Tab.MOVIES)
+        tab = runCatching { Tab.valueOf(prefs.getString("tab", "HOME")!!) }.getOrDefault(Tab.HOME)
         for ((t, v) in tabs) v.setOnClickListener { selectTab(t) }
 
         findViewById<View>(R.id.settings).setOnClickListener { showSources() }
@@ -207,6 +209,8 @@ class MainActivity : AppCompatActivity() {
         if (tab == Tab.LIVE) {
             chips.isVisible = false
             renderSide()
+        } else if (tab == Tab.HOME || tab == Tab.WATCH) {
+            chips.isVisible = false
         } else {
             val list: List<CatalogItem> = if (tab == Tab.MOVIES) Catalog.movies else Catalog.shows
             val genres = if (tab == Tab.MOVIES) Catalog.movieGenres else Catalog.showGenres
@@ -275,18 +279,32 @@ class MainActivity : AppCompatActivity() {
         refresh()
     }
 
-    /** Lo que se dejó a medias, de lo más reciente a lo más antiguo. */
-    private fun resumeItems(shows: Boolean): List<CatalogItem> {
-        val pos = getSharedPreferences("resume", MODE_PRIVATE).all.keys
+    /**
+     * Seguir viendo: pelis a medias y series que estás viendo (aunque hayas
+     * terminado el último capítulo), de lo más reciente a lo más antiguo.
+     */
+    private fun resumeItems(t: Tab): List<CatalogItem> {
+        val resume = getSharedPreferences("resume", MODE_PRIVATE).all.keys
         val times = getSharedPreferences("resume_t", MODE_PRIVATE)
-        val prefix = if (shows) "ep:" else "movie:"
-        val byKey: Map<String, CatalogItem> =
-            (if (shows) Catalog.shows else Catalog.movies).associateBy { it.key }
-        return pos.filter { it.startsWith(prefix) }
-            .sortedByDescending { times.getLong(it, 0L) }
-            .mapNotNull { k -> byKey[k.removePrefix(prefix).substringBefore(':')] }
-            .distinct()
-            .take(20)
+        val series = getSharedPreferences("series", MODE_PRIVATE)
+        val movies = Catalog.movies.associateBy { it.key }
+        val shows = Catalog.shows.associateBy { it.key }
+        val entries = ArrayList<Pair<CatalogItem, Long>>()
+        if (t != Tab.SHOWS) {
+            for (k in resume) if (k.startsWith("movie:")) {
+                movies[k.removePrefix("movie:")]?.let { entries += it to times.getLong(k, 0L) }
+            }
+        }
+        if (t != Tab.MOVIES) {
+            for (k in resume) if (k.startsWith("ep:")) {
+                shows[k.removePrefix("ep:").substringBefore(':')]?.let { entries += it to times.getLong(k, 0L) }
+            }
+            val since = System.currentTimeMillis() - 60L * 24 * 60 * 60 * 1000
+            for ((k, v) in series.all) if (k.startsWith("t:") && v is Long && v > since) {
+                shows[k.removePrefix("t:")]?.let { entries += it to v }
+            }
+        }
+        return entries.sortedByDescending { it.second }.map { it.first }.distinct().take(25)
     }
 
     private fun refresh(scrollTop: Boolean = false) {
@@ -310,21 +328,37 @@ class MainActivity : AppCompatActivity() {
                 }
                 useAdapter(channelAdapter)
                 channelAdapter.submit(res)
+            } else if (q.isNotEmpty()) {
+                // La búsqueda encuentra pelis y series estés en la pestaña que estés
+                val res = withContext(Dispatchers.Default) { Search.items(Catalog.movies + Catalog.shows, q) }
+                useAdapter(posterAdapter)
+                posterAdapter.submit(res)
+            } else if (t == Tab.WATCH) {
+                useAdapter(posterAdapter)
+                posterAdapter.submit(Catalog.watchAll)
+            } else if (t == Tab.HOME) {
+                // Inicio: pelis y series mezcladas
+                val resume = resumeItems(Tab.HOME)
+                val newEps = Catalog.newEpisodes
+                val rows = withContext(Dispatchers.Default) {
+                    val genres = (Catalog.movieGenres + Catalog.showGenres).distinctBy { Titles.genreKey(it) }
+                    Home.rows(Catalog.movies + Catalog.shows, resume, genres, emptyList(), newEps)
+                }
+                useAdapter(rowsAdapter)
+                rowsAdapter.submit(rows)
             } else {
                 val shows = t == Tab.SHOWS
                 val src: List<CatalogItem> = if (shows) Catalog.shows else Catalog.movies
-                if (q.isEmpty() && f == VodFilter.Home) {
+                if (f == VodFilter.Home) {
                     val genres = if (shows) Catalog.showGenres else Catalog.movieGenres
-                    val resume = resumeItems(shows)
-                    val watch = if (shows) Catalog.watchShows else Catalog.watchMovies
+                    val resume = resumeItems(t)
                     val newEps = if (shows) Catalog.newEpisodes else emptyList()
-                    val rows = withContext(Dispatchers.Default) { Home.rows(src, resume, genres, watch, newEps) }
+                    val rows = withContext(Dispatchers.Default) { Home.rows(src, resume, genres, emptyList(), newEps) }
                     useAdapter(rowsAdapter)
                     rowsAdapter.submit(rows)
                 } else {
                     val res = withContext(Dispatchers.Default) {
                         when {
-                            q.isNotEmpty() -> Search.items(src, q)
                             f is VodFilter.From -> src.filter { f.origin in it.origins }.sortedByDescending { it.added }
                             f is VodFilter.Genre -> Home.byGenre(src, f.name)
                             else -> src
@@ -342,7 +376,8 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         // Al volver del reproductor, actualizar "Seguir viendo"
-        if (tab != Tab.LIVE && vodFilter == VodFilter.Home && query.isEmpty() && content.adapter === rowsAdapter) {
+        // y "Mi lista" por si has añadido o quitado algo desde una ficha
+        if (query.isEmpty() && (content.adapter === rowsAdapter || tab == Tab.WATCH)) {
             refresh()
         }
     }
@@ -353,6 +388,8 @@ class MainActivity : AppCompatActivity() {
             Tab.LIVE -> Catalog.live.isEmpty()
             Tab.MOVIES -> Catalog.movies.isEmpty()
             Tab.SHOWS -> Catalog.shows.isEmpty()
+            Tab.HOME -> Catalog.movies.isEmpty() && Catalog.shows.isEmpty()
+            Tab.WATCH -> Catalog.watchAll.isEmpty()
         }
         progress.isVisible = busy > 0 && nothing
         busyBar.isVisible = busy > 0 && !nothing
@@ -361,8 +398,11 @@ class MainActivity : AppCompatActivity() {
         emptyText.text = when {
             !nothing -> "Sin resultados"
             tab == Tab.LIVE -> "Añade una lista IPTV para ver canales"
+            tab == Tab.WATCH && !Plex.loggedIn -> "Conecta tu cuenta de Plex para ver tu lista"
+            tab == Tab.WATCH -> "Tu lista de Plex está vacía.\nAñade títulos desde su ficha."
             else -> "Añade una lista IPTV o conecta Plex"
         }
+        emptyAdd.isVisible = nothing && !(tab == Tab.WATCH && Plex.loggedIn)
         // Si el foco se ha quedado en algo que ya no se ve, llevarlo al botón
         if (emptyAdd.isShown) {
             val f = currentFocus
@@ -415,7 +455,7 @@ class MainActivity : AppCompatActivity() {
                     else "Hay capítulos nuevos de ${found.size} series que estás viendo"
                 )
             }
-            if (tab == Tab.SHOWS) refresh()
+            if (tab == Tab.SHOWS || tab == Tab.HOME) refresh()
         }
     }
 

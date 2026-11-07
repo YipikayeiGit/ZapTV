@@ -13,7 +13,7 @@ import java.io.FileOutputStream
  * sin volver a leer los archivos enormes del proveedor.
  */
 object Snapshot {
-    private const val VERSION = 5
+    private const val VERSION = 6
 
     // ---------- Escritura ----------
 
@@ -47,7 +47,7 @@ object Snapshot {
         str(m.title); writeInt(m.year ?: -1); str(m.poster); str(m.plot)
         writeLong(m.added); writeFloat(m.rating ?: -1f); strs(m.genres)
         writeInt(m.sources.size); m.sources.forEach { source(it) }
-        strs(m.extIds)
+        strs(m.extIds); strs(m.altTitles)
     }
 
     private fun DataOutputStream.show(s: Show) {
@@ -55,7 +55,7 @@ object Snapshot {
         writeInt(s.plex.size); s.plex.forEach { str(it.server); str(it.key); str(it.guid) }
         strs(s.xtreamIds)
         writeInt(s.episodes.size); s.episodes.forEach { episode(it) }
-        writeLong(s.added); writeFloat(s.rating ?: -1f); strs(s.genres); str(s.quality); strs(s.extIds)
+        writeLong(s.added); writeFloat(s.rating ?: -1f); strs(s.genres); str(s.quality); strs(s.extIds); strs(s.altTitles)
     }
 
     private fun write(file: File, tag: String, body: DataOutputStream.() -> Unit) {
@@ -132,7 +132,8 @@ object Snapshot {
             val genres = strs()
             val sources = List(int()) { source() }
             val extIds = strs()
-            return Movie(title, year, poster, sources, plot, added, rating, genres, extIds)
+            val alts = strs()
+            return Movie(title, year, poster, sources, plot, added, rating, genres, extIds, alts)
         }
 
         fun show(): Show {
@@ -148,8 +149,9 @@ object Snapshot {
             val genres = strs()
             val quality = shared()
             val extIds = strs()
+            val alts = strs()
             return Show(
-                title, year, poster, plot, plex, xtream, episodes, added, rating, genres, quality, extIds,
+                title, year, poster, plot, plex, xtream, episodes, added, rating, genres, quality, extIds, alts,
             )
         }
     }

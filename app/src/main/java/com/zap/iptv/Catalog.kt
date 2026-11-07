@@ -1,6 +1,7 @@
 package com.zap.iptv
 
 import java.util.Calendar
+import java.util.IdentityHashMap
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
@@ -76,8 +77,8 @@ interface CatalogItem {
     val quality: String?
     /** plex://…, imdb://…, tmdb://… para cruzar fuentes y Mi lista. */
     val ids: List<String>
-    /** Título sin espacios ni signos ("spiderman"), para buscar. */
-    val searchKey: String
+    /** Título y títulos alternativos (original, nombre en Mi lista…) normalizados, para buscar. */
+    val searchKeys: List<String>
     val available: Boolean get() = origins.isNotEmpty()
     val badge: String
         get() = if (!available) "No disponible"
@@ -95,13 +96,15 @@ data class Movie(
     override val genres: List<String> = emptyList(),
     /** Ids de Plex cuando la peli solo está en Mi lista. */
     val extIds: List<String> = emptyList(),
+    /** Otros títulos (original, en otro idioma…). */
+    val altTitles: List<String> = emptyList(),
     override val key: String = Titles.key(title),
 ) : CatalogItem {
     override val origins: Set<Origin> get() = sources.mapTo(HashSet()) { it.origin }
     override val genreKeys: Set<String> by lazy { genres.mapTo(HashSet()) { Titles.genreKey(it) } }
     override val quality: String? get() = Quality.best(sources.map { it.quality })
     override val ids: List<String> get() = sources.flatMap { listOfNotNull(it.plexGuid) + it.extIds } + extIds
-    override val searchKey: String by lazy { key.replace(" ", "") }
+    override val searchKeys: List<String> by lazy { (listOf(key) + altTitles.map { Titles.key(it) }).distinct() }
 }
 
 data class Show(
@@ -118,11 +121,12 @@ data class Show(
     override val genres: List<String> = emptyList(),
     override val quality: String? = null,
     val extIds: List<String> = emptyList(),
+    val altTitles: List<String> = emptyList(),
     override val key: String = Titles.key(title),
 ) : CatalogItem {
     override val genreKeys: Set<String> by lazy { genres.mapTo(HashSet()) { Titles.genreKey(it) } }
     override val ids: List<String> get() = plex.mapNotNull { it.guid } + extIds
-    override val searchKey: String by lazy { key.replace(" ", "") }
+    override val searchKeys: List<String> by lazy { (listOf(key) + altTitles.map { Titles.key(it) }).distinct() }
 
     override val origins: Set<Origin>
         get() = HashSet<Origin>().apply {
@@ -173,6 +177,8 @@ object Catalog {
     @Volatile var showGenres: List<String> = emptyList()
     @Volatile var watchMovies: List<CatalogItem> = emptyList()
     @Volatile var watchShows: List<CatalogItem> = emptyList()
+    /** Mi lista completa (pelis y series) en el orden de Plex. */
+    @Volatile var watchAll: List<CatalogItem> = emptyList()
     /** Series que estabas viendo y tienen capítulos nuevos. */
     @Volatile var newEpisodes: List<CatalogItem> = emptyList()
 
@@ -180,8 +186,13 @@ object Catalog {
         val i = iptv
         val p = plex
         live = i.live
-        val m = Merge.movies(p.movies + i.movies)
-        val s = Merge.shows(p.shows + i.shows)
+        // El título con el que sale en Mi lista también sirve para buscar ("Tierra de mafia" = "MobLand")
+        val m = Watch.withAliases(Merge.movies(p.movies + i.movies), p.watchlist.filter { it.type != "show" }) { x, a ->
+            x.copy(altTitles = (x.altTitles + a).distinct())
+        }
+        val s = Watch.withAliases(Merge.shows(p.shows + i.shows), p.watchlist.filter { it.type == "show" }) { x, a ->
+            x.copy(altTitles = (x.altTitles + a).distinct())
+        }
         movieGenres = Home.genres(m)
         showGenres = Home.genres(s)
         movies = m
@@ -190,43 +201,64 @@ object Catalog {
     }
 
     fun rebuildWatch() {
-        val watch = plex.watchlist
-        watchMovies = Watch.match(movies, watch.filter { it.type != "show" }, shows = false)
-        watchShows = Watch.match(shows, watch.filter { it.type == "show" }, shows = true)
+        val watch = plex.watchlist.filter { it.type == "movie" || it.type == "show" }
+        val mIdx = Watch.Index(movies)
+        val sIdx = Watch.Index(shows)
+        val all = watch.map { w ->
+            val show = w.type == "show"
+            (if (show) sIdx.find(w) else mIdx.find(w)) ?: Watch.placeholder(w, show)
+        }.distinct()
+        watchAll = all
+        watchMovies = all.filter { it is Movie }
+        watchShows = all.filter { it is Show }
     }
 }
 
 /** "Mi lista" de Plex cruzada con lo que hay en tus fuentes. */
 object Watch {
-    fun match(items: List<CatalogItem>, watch: List<WatchItem>, shows: Boolean): List<CatalogItem> {
-        if (watch.isEmpty()) return emptyList()
-        val byId = HashMap<String, CatalogItem>()
-        val byKey = HashMap<String, MutableList<CatalogItem>>()
-        for (i in items) {
-            for (id in i.ids) byId[id] = i
-            byKey.getOrPut(i.key) { ArrayList(1) } += i
+    /** Índice para encontrar un título por identificador o por cualquiera de sus títulos. */
+    class Index(items: List<CatalogItem>) {
+        private val byId = HashMap<String, CatalogItem>()
+        private val byKey = HashMap<String, MutableList<CatalogItem>>()
+
+        init {
+            for (i in items) {
+                for (id in i.ids) byId[id] = i
+                for (k in i.searchKeys) byKey.getOrPut(k) { ArrayList(1) } += i
+            }
         }
-        return watch.map { w ->
+
+        fun find(w: WatchItem): CatalogItem? =
             (listOfNotNull(w.guid) + w.extIds).firstNotNullOfOrNull { byId[it] }
                 ?: byKey[Titles.key(w.title)]?.firstOrNull { c ->
                     val cy = c.year
                     w.year == null || cy == null || abs(cy - w.year) <= 1
                 }
-                ?: placeholder(w, shows)
-        }.distinct()
+    }
+
+    /** Añade como título alternativo el nombre con el que aparece en Mi lista. */
+    fun <T : CatalogItem> withAliases(items: List<T>, watch: List<WatchItem>, copy: (T, List<String>) -> T): List<T> {
+        if (watch.isEmpty()) return items
+        val idx = Index(items)
+        val extra = IdentityHashMap<CatalogItem, MutableList<String>>()
+        for (w in watch) {
+            val hit = idx.find(w) ?: continue
+            if (Titles.key(w.title) !in hit.searchKeys) extra.getOrPut(hit) { ArrayList(1) } += w.title
+        }
+        if (extra.isEmpty()) return items
+        return items.map { i -> extra[i]?.let { copy(i, it) } ?: i }
     }
 
     /** Lo que está en Mi lista pero no en tus fuentes: se muestra como "No disponible". */
-    private fun placeholder(w: WatchItem, shows: Boolean): CatalogItem {
+    fun placeholder(w: WatchItem, shows: Boolean): CatalogItem {
         val ids = listOfNotNull(w.guid) + w.extIds
         return if (shows) Show(w.title, w.year, w.thumb, extIds = ids)
         else Movie(w.title, w.year, w.thumb, emptyList(), extIds = ids)
     }
 
     fun contains(item: CatalogItem): Boolean {
-        val list = if (item is Show) Catalog.watchShows else Catalog.watchMovies
         val ids = item.ids.toSet()
-        return list.any { it === item || it.key == item.key || it.ids.any { id -> id in ids } }
+        return Catalog.watchAll.any { it === item || (it.key == item.key && (it is Show) == (item is Show)) || it.ids.any { id -> id in ids } }
     }
 
     /** El identificador de Plex (plex://movie/…) de un título, si lo tiene. */
@@ -257,7 +289,7 @@ object Search {
     fun items(src: List<CatalogItem>, raw: String): List<CatalogItem> {
         val q = Query(raw)
         return src.asSequence()
-            .map { it to score(it.key, it.searchKey, q) }
+            .map { item -> item to item.searchKeys.maxOf { k -> score(k, k.replace(" ", ""), q) } }
             .filter { it.second > 0 }
             .sortedWith(
                 compareByDescending<Pair<CatalogItem, Int>> { it.second }
@@ -336,6 +368,7 @@ object Merge {
                     rating = o.rating ?: m.rating,
                     genres = mergeGenres(o.genres, m.genres),
                     extIds = (o.extIds + m.extIds).distinct(),
+                    altTitles = alts(o.title, o.altTitles, m.title, m.altTitles),
                 )
             } else {
                 pos = out.size
@@ -373,6 +406,7 @@ object Merge {
                     genres = mergeGenres(o.genres, s.genres),
                     quality = Quality.best(listOf(o.quality, s.quality)),
                     extIds = (o.extIds + s.extIds).distinct(),
+                    altTitles = alts(o.title, o.altTitles, s.title, s.altTitles),
                 )
             } else {
                 pos = out.size
@@ -383,6 +417,13 @@ object Merge {
         }
         out.sortBy { it.key }
         return out
+    }
+
+    /** Al juntar dos fuentes con títulos distintos (p. ej. inglés y español), se guardan ambos. */
+    private fun alts(t1: String, a1: List<String>, t2: String, a2: List<String>): List<String> {
+        val out = (a1 + a2).toMutableList()
+        if (Titles.key(t1) != Titles.key(t2)) out += t2
+        return out.distinct()
     }
 
     private fun mergeGenres(a: List<String>, b: List<String>): List<String> =

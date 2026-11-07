@@ -291,6 +291,7 @@ object Plex {
                         .takeIf { it > 0 }?.toFloat()
                     val genres = if (libName != null) x.genres + libName else x.genres
                     val year = x.year.takeIf { it > 0 }
+                    val alts = listOfNotNull(x.originalTitle?.takeIf { it.isNotBlank() && it != title })
                     if (type == "movie") {
                         val label = listOfNotNull("Plex", resLabel(x.resolution), s.name.takeIf { multi }).joinToString(" · ")
                         movies += Movie(
@@ -301,12 +302,13 @@ object Plex {
                                     quality = Quality.fromPlex(x.resolution), extIds = x.extIds.toList(),
                                 )
                             ),
-                            x.summary, x.added, rating, genres,
+                            x.summary, x.added, rating, genres, altTitles = alts,
                         )
                     } else {
                         shows += Show(
                             title, year, poster, x.summary, plex = listOf(PlexRef(s.id, x.key, x.guid)),
                             added = x.added, rating = rating, genres = genres, extIds = x.extIds.toList(),
+                            altTitles = alts,
                         )
                     }
                 }
@@ -323,6 +325,7 @@ object Plex {
         var key = ""
         var guid: String? = null
         var title: String? = null
+        var originalTitle: String? = null
         var year = 0
         var thumb: String? = null
         var summary: String? = null
@@ -396,6 +399,7 @@ object Plex {
                 "guid" -> x.guid = r.strOrNull()
                 "Guid" -> r.eachObject { name -> if (name == "id") r.strOrNull()?.let { x.extIds += it } else r.skipValue() }
                 "title" -> x.title = r.strOrNull()
+                "originalTitle" -> x.originalTitle = r.strOrNull()
                 "year" -> x.year = r.numOrZero().toInt()
                 "thumb" -> x.thumb = r.strOrNull()
                 "summary" -> x.summary = r.strOrNull()?.takeIf { it.isNotBlank() }

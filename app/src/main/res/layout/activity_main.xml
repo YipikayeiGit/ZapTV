@@ -28,6 +28,11 @@
                 android:orientation="horizontal">
 
                 <TextView
+                    android:id="@+id/tabHome"
+                    style="@style/Tab"
+                    android:text="Inicio" />
+
+                <TextView
                     android:id="@+id/tabMovies"
                     style="@style/Tab"
                     android:text="Películas" />
@@ -36,6 +41,11 @@
                     android:id="@+id/tabShows"
                     style="@style/Tab"
                     android:text="Series" />
+
+                <TextView
+                    android:id="@+id/tabWatch"
+                    style="@style/Tab"
+                    android:text="Mi lista" />
 
                 <TextView
                     android:id="@+id/tabLive"
