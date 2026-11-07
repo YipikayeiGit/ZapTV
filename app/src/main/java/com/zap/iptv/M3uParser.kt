@@ -62,7 +62,7 @@ object M3uParser {
                     val cl = Titles.clean(c.name)
                     movies += Movie(
                         cl.title, cl.year, c.logo,
-                        listOf(SourceRef(Origin.IPTV, label(c.url), url = c.url)),
+                        listOf(SourceRef(Origin.IPTV, label(c.url), url = c.url, quality = Quality.fromText(c.name, c.group))),
                         genres = listOfNotNull(Titles.category(c.group.takeIf { it != "Sin grupo" })),
                     )
                 }

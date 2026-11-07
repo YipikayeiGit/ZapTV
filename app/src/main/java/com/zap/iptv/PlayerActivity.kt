@@ -177,7 +177,8 @@ class PlayerActivity : AppCompatActivity() {
         player.playWhenReady = true
     }
 
-    private fun savedPosition(it: PlayItem): Long = it.resumeKey?.let { k -> resume.getLong(k, 0L) } ?: 0L
+    private fun savedPosition(it: PlayItem): Long =
+        if (it.fromStart) 0L else it.resumeKey?.let { k -> resume.getLong(k, 0L) } ?: 0L
 
     private fun savePosition() {
         val key = item?.resumeKey ?: return

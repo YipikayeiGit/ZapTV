@@ -27,6 +27,9 @@ object Http {
     fun <T> stream(url: String, headers: Map<String, String> = emptyMap(), timeout: Int = 60_000, body: (InputStream) -> T): T =
         open("GET", url, headers, timeout, body)
 
+    fun put(url: String, headers: Map<String, String> = emptyMap(), timeout: Int = 20_000): String =
+        open("PUT", url, headers, timeout) { it.readBytes() }.toString(Charsets.UTF_8)
+
     fun download(url: String, file: File, headers: Map<String, String> = emptyMap(), timeout: Int = 90_000) {
         open("GET", url, headers, timeout) { input -> file.outputStream().use { input.copyTo(it) } }
     }
@@ -47,7 +50,7 @@ object Http {
             c.instanceFollowRedirects = false
             c.setRequestProperty("User-Agent", UA)
             for ((k, v) in headers) c.setRequestProperty(k, v)
-            if (method == "POST") {
+            if (method == "POST" || method == "PUT") {
                 c.doOutput = true
                 c.setFixedLengthStreamingMode(0)
                 c.outputStream.close()

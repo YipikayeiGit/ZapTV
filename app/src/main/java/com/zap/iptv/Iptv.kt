@@ -11,9 +11,16 @@ object Iptv {
 
     private fun xtreamDir(ctx: Context) = File(ctx.filesDir, "xtream")
     private fun m3uCache(ctx: Context) = File(ctx.filesDir, "lista.m3u")
+    private fun snapshot(ctx: Context) = File(ctx.filesDir, "iptv.bin")
 
     fun loadCached(ctx: Context, src: String?): IptvData? {
         src ?: return null
+        // Copia compacta: lo más rápido
+        Snapshot.readIptv(snapshot(ctx), src)?.let { return it }
+        return loadRaw(ctx, src)?.also { Snapshot.writeIptv(snapshot(ctx), src, it) }
+    }
+
+    private fun loadRaw(ctx: Context, src: String): IptvData? {
         val acc = Xtream.Account.parse(src)
         val dir = xtreamDir(ctx)
         if (acc != null && Xtream.hasCache(dir)) return Xtream.parse(dir, acc)
@@ -22,6 +29,12 @@ object Iptv {
     }
 
     suspend fun refresh(ctx: Context, src: String, preloaded: String? = null): IptvData {
+        val data = fetch(ctx, src, preloaded)
+        Snapshot.writeIptv(snapshot(ctx), src, data)
+        return data
+    }
+
+    private suspend fun fetch(ctx: Context, src: String, preloaded: String?): IptvData {
         val acc = Xtream.Account.parse(src)
         if (acc != null && preloaded == null) {
             val data = runCatching {

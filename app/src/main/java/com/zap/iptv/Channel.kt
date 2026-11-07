@@ -8,8 +8,9 @@ data class Channel(
     val logo: String?,
     val group: String,
 ) {
-    /** Nombre normalizado (sin tildes, minúsculas) para buscar rápido. */
-    val key: String = fold(name)
+    /** Nombre normalizado para buscar ("la 1" / "la1"). */
+    val skey: String by lazy { Titles.key(name) }
+    val compact: String by lazy { skey.replace(" ", "") }
 }
 
 private val DIACRITICS = Regex("\\p{Mn}+")

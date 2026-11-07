@@ -22,6 +22,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.IOException
 
 class DetailActivity : AppCompatActivity() {
 
@@ -37,7 +38,10 @@ class DetailActivity : AppCompatActivity() {
     private val plexDetails = HashMap<String, Plex.Details>()
 
     private val seasonAdapter = ChipAdapter { pos -> showSeason(pos) }
-    private val episodeAdapter = EpisodeAdapter { ep -> pickSource(ep) }
+    private var knownBefore = 0
+    private val episodeAdapter = EpisodeAdapter(isNew = { ep -> knownBefore > 0 && Episodes.code(ep) > knownBefore }) { ep ->
+        pickSource(ep)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -87,7 +91,14 @@ class DetailActivity : AppCompatActivity() {
         // Plex primero: suele tener mejor calidad
         val sources = m.sources.sortedBy { it.origin.ordinal }
         val buttons = sources.map { src -> addSourceButton(src.label) { play(m.title, src, "movie:${m.key}") } }
-        buttons.firstOrNull()?.requestFocus()
+        if (sources.isEmpty()) {
+            findViewById<TextView>(R.id.credits).apply {
+                text = "No está en tus fuentes (Plex o IPTV)"
+                isVisible = true
+            }
+        }
+        addWatchlistButton()
+        (buttons.firstOrNull() ?: sourcesBox.getChildAt(0))?.requestFocus()
 
         var infoShown = false
         // Completar las etiquetas de Plex con idiomas y subtítulos, y la ficha
@@ -218,27 +229,40 @@ class DetailActivity : AppCompatActivity() {
         episodesView.adapter = episodeAdapter
         episodesView.isVisible = true
         progress.isVisible = true
+        addWatchlistButton()
 
-        val acc = Xtream.Account.parse(getSharedPreferences("zap", MODE_PRIVATE).getString("src", null))
+        // Capítulos que existían la última vez: los posteriores se marcan como NUEVO
+        knownBefore = Episodes.known(this, s)
+        val watching = Episodes.watching(this, s)
+
         lifecycleScope.launch {
-            val lists = withContext(Dispatchers.IO) {
-                val plex = s.plex.map { ref -> async { runCatching { Plex.episodes(ref) }.getOrDefault(emptyList()) } }
-                val xt: List<Deferred<List<Episode>>> = if (acc == null) emptyList() else s.xtreamIds.map { id ->
-                    async { runCatching { Xtream.episodes(acc, id) }.getOrDefault(emptyList()) }
-                }
-                (plex + xt).awaitAll() + listOf(s.episodes)
-            }
-            episodes = Merge.episodes(lists)
+            episodes = Episodes.load(this@DetailActivity, s)
             progress.isVisible = false
             if (episodes.isEmpty()) {
-                msg.text = "No se encontraron capítulos"
+                msg.text = if (s.available) "No se encontraron capítulos" else "Esta serie no está en tus fuentes (Plex o IPTV)"
                 msg.isVisible = true
                 return@launch
             }
             seasons = episodes.map { it.season }.distinct()
             seasonAdapter.submit(seasons.map { if (it == 0) "Especiales" else "Temporada $it" })
             seasonsView.isVisible = seasons.size > 1
-            showSeason(0)
+
+            // Empezar en la temporada del primer capítulo nuevo, o de la última que viste
+            val firstNew = if (watching && knownBefore > 0) episodes.firstOrNull { Episodes.code(it) > knownBefore } else null
+            val lastSeen = getSharedPreferences("series", MODE_PRIVATE).getInt("p:${s.key}", 0) / 10_000
+            val season = firstNew?.season ?: lastSeen.takeIf { it > 0 && it in seasons }
+            val pos = season?.let { seasons.indexOf(it) }?.takeIf { it >= 0 } ?: 0
+            seasonAdapter.submit(seasons.map { if (it == 0) "Especiales" else "Temporada $it" }, pos)
+            showSeason(pos)
+            if (firstNew != null) {
+                Toast.makeText(
+                    this@DetailActivity,
+                    "Nuevo: T${firstNew.season}E${firstNew.number} de ${s.title} ya disponible",
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+            Episodes.markSeen(this@DetailActivity, s, Episodes.maxCode(episodes))
+            Catalog.newEpisodes = Catalog.newEpisodes.filter { it.key != s.key }
             episodesView.post { episodesView.getChildAt(0)?.requestFocus() }
         }
     }
@@ -253,27 +277,102 @@ class DetailActivity : AppCompatActivity() {
         val title = "${item.title} · T${ep.season}E${ep.number}"
         val key = "ep:${item.key}:${ep.season}:${ep.number}"
         val sources = ep.sources.sortedBy { it.origin.ordinal }
+        val start = { src: SourceRef ->
+            Episodes.markWatched(this, item, ep, Episodes.maxCode(episodes))
+            play(title, src, key)
+        }
         if (sources.size == 1) {
-            play(title, sources[0], key)
+            start(sources[0])
             return
         }
         MaterialAlertDialogBuilder(this)
             .setTitle("Episodio ${ep.number}")
-            .setItems(sources.map { it.label }.toTypedArray()) { _, which -> play(title, sources[which], key) }
+            .setItems(sources.map { it.label }.toTypedArray()) { _, which -> start(sources[which]) }
             .show()
+    }
+
+    // ---------- Mi lista de Plex ----------
+
+    private fun addWatchlistButton() {
+        if (!Plex.loggedIn) return
+        val b = addSourceButton("") { }
+        b.setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, 0, 0)
+        fun label() {
+            b.text = if (Watch.contains(item)) "✓  En Mi lista de Plex (quitar)" else "＋  Añadir a Mi lista de Plex"
+        }
+        label()
+        b.setOnClickListener {
+            val add = !Watch.contains(item)
+            b.isEnabled = false
+            lifecycleScope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val guid = Watch.plexGuid(item)
+                            ?: Plex.findGuid(item.title, item.year, item is Show)
+                            ?: throw IOException("no se ha encontrado este título en Plex")
+                        Plex.setWatchlist(guid, add)
+                        guid
+                    }
+                }
+                b.isEnabled = true
+                result.onSuccess { guid ->
+                    val type = if (item is Show) "show" else "movie"
+                    val p = Catalog.plex
+                    val list = if (add) {
+                        p.watchlist + WatchItem(guid, item.title, item.year, type, item.poster?.takeIf { it.startsWith("http") })
+                    } else {
+                        p.watchlist.filter { w ->
+                            w.guid != guid && !(Titles.key(w.title) == item.key && (w.year == null || w.year == item.year))
+                        }
+                    }
+                    Catalog.plex = p.copy(watchlist = list)
+                    withContext(Dispatchers.Default) { Catalog.rebuildWatch() }
+                    withContext(Dispatchers.IO) { Plex.saveCache(this@DetailActivity, Catalog.plex) }
+                    label()
+                    Toast.makeText(
+                        this@DetailActivity,
+                        if (add) "Añadido a Mi lista" else "Quitado de Mi lista",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }.onFailure { e ->
+                    Toast.makeText(
+                        this@DetailActivity,
+                        "No se pudo cambiar Mi lista: ${e.message ?: e.javaClass.simpleName}",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+            }
+        }
     }
 
     // ---------- Reproducir ----------
 
+    /** Si ya lo empezaste: continuar o empezar desde el principio. */
     private fun play(title: String, src: SourceRef, resumeKey: String) {
+        val saved = getSharedPreferences("resume", MODE_PRIVATE).getLong(resumeKey, 0L)
+        if (saved <= 0L) {
+            startPlayback(title, src, resumeKey, fromStart = false)
+            return
+        }
+        val m = saved / 60_000
+        val time = if (m >= 60) "${m / 60} h ${m % 60} min" else "$m min"
+        MaterialAlertDialogBuilder(this)
+            .setTitle(title)
+            .setItems(arrayOf("▶  Continuar ($time)", "⟲  Empezar desde el principio")) { _, which ->
+                startPlayback(title, src, resumeKey, fromStart = which == 1)
+            }
+            .show()
+    }
+
+    private fun startPlayback(title: String, src: SourceRef, resumeKey: String, fromStart: Boolean) {
         lifecycleScope.launch {
             val playItem = try {
                 withContext(Dispatchers.IO) {
                     if (src.origin == Origin.IPTV) {
-                        PlayItem(title, src.url!!, resumeKey = resumeKey)
+                        PlayItem(title, src.url!!, resumeKey = resumeKey, fromStart = fromStart)
                     } else {
                         val d = plexDetails[src.plexKey!!] ?: Plex.details(src.plexServer!!, src.plexKey!!)
-                        PlayItem(title, d.url, d.subs, resumeKey = resumeKey)
+                        PlayItem(title, d.url, d.subs, resumeKey = resumeKey, fromStart = fromStart)
                     }
                 }
             } catch (e: CancellationException) {

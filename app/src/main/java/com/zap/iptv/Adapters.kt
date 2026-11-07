@@ -147,6 +147,7 @@ class PosterAdapter(
         val badge: TextView = v.findViewById(R.id.badge)
         val title: TextView = v.findViewById(R.id.title)
         val year: TextView = v.findViewById(R.id.year)
+        val quality: TextView = v.findViewById(R.id.quality)
 
         init {
             box.clipToOutline = true
@@ -178,6 +179,9 @@ class PosterAdapter(
         h.title.text = it.title
         h.year.text = it.year?.toString() ?: ""
         h.badge.text = it.badge
+        val q = it.quality
+        h.quality.text = q ?: ""
+        h.quality.visibility = if (q != null) View.VISIBLE else View.GONE
         h.ph.text = it.title
         h.ph.visibility = View.VISIBLE
         if (it.poster != null) {
@@ -195,8 +199,10 @@ class PosterAdapter(
     override fun getItemCount() = items.size
 }
 
-class EpisodeAdapter(private val onClick: (Episode) -> Unit) :
-    RecyclerView.Adapter<EpisodeAdapter.VH>() {
+class EpisodeAdapter(
+    private val isNew: (Episode) -> Boolean = { false },
+    private val onClick: (Episode) -> Unit,
+) : RecyclerView.Adapter<EpisodeAdapter.VH>() {
 
     private var items: List<Episode> = emptyList()
 
@@ -226,8 +232,9 @@ class EpisodeAdapter(private val onClick: (Episode) -> Unit) :
         val e = items[position]
         h.num.text = e.number.toString()
         h.title.text = e.title ?: "Episodio ${e.number}"
-        h.badge.text = Origin.entries.filter { o -> e.sources.any { it.origin == o } }
+        val origins = Origin.entries.filter { o -> e.sources.any { it.origin == o } }
             .joinToString(" · ") { it.label }
+        h.badge.text = if (isNew(e)) "NUEVO · $origins" else origins
     }
 
     override fun getItemCount() = items.size

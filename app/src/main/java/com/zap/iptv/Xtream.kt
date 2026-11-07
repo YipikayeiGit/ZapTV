@@ -63,6 +63,12 @@ object Xtream {
         return out
     }
 
+    /** Algunos proveedores dan el id de TMDb: sirve para emparejar con Plex sin depender del título. */
+    private fun tmdb(m: Map<String, String>): List<String> {
+        val id = (m["tmdb"] ?: m["tmdb_id"])?.trim()?.takeIf { it.isNotEmpty() && it != "0" && it.all { c -> c.isDigit() } }
+        return if (id == null) emptyList() else listOf("tmdb://$id")
+    }
+
     private fun rating(v: String?): Float? = v?.replace(',', '.')?.toFloatOrNull()?.takeIf { it > 0f && it <= 10f }
 
     fun parse(dir: File, acc: Account): IptvData {
@@ -87,7 +93,7 @@ object Xtream {
         val movies = ArrayList<Movie>()
         forEachFlatObject(
             File(dir, "vod.json"),
-            setOf("stream_id", "name", "stream_icon", "container_extension", "year", "added", "rating", "category_id"),
+            setOf("stream_id", "name", "stream_icon", "container_extension", "year", "added", "rating", "category_id", "tmdb", "tmdb_id"),
         ) { m ->
             val id = m["stream_id"] ?: return@forEachFlatObject
             val name = m["name"]?.takeIf { it.isNotBlank() } ?: return@forEachFlatObject
@@ -97,7 +103,13 @@ object Xtream {
                 title = c.title,
                 year = m["year"]?.take(4)?.toIntOrNull() ?: c.year,
                 poster = m["stream_icon"]?.takeIf { it.isNotBlank() },
-                sources = listOf(SourceRef(Origin.IPTV, "IPTV · ${ext.uppercase()}", url = acc.movie(id, ext))),
+                sources = listOf(
+                    SourceRef(
+                        Origin.IPTV, "IPTV · ${ext.uppercase()}", url = acc.movie(id, ext),
+                        quality = Quality.fromText(name, vodCats[m["category_id"]]),
+                        extIds = tmdb(m),
+                    )
+                ),
                 added = m["added"]?.toLongOrNull() ?: 0L,
                 rating = rating(m["rating"]),
                 genres = vodGenre[m["category_id"]] ?: emptyList(),
@@ -107,7 +119,7 @@ object Xtream {
         val shows = ArrayList<Show>()
         forEachFlatObject(
             File(dir, "series.json"),
-            setOf("series_id", "name", "cover", "plot", "year", "releaseDate", "last_modified", "rating", "category_id"),
+            setOf("series_id", "name", "cover", "plot", "year", "releaseDate", "last_modified", "rating", "category_id", "tmdb", "tmdb_id"),
         ) { m ->
             val id = m["series_id"] ?: return@forEachFlatObject
             val name = m["name"]?.takeIf { it.isNotBlank() } ?: return@forEachFlatObject
@@ -123,6 +135,8 @@ object Xtream {
                 added = m["last_modified"]?.toLongOrNull() ?: 0L,
                 rating = rating(m["rating"]),
                 genres = seriesGenre[m["category_id"]] ?: emptyList(),
+                quality = Quality.fromText(name, seriesCats[m["category_id"]]),
+                extIds = tmdb(m),
             )
         }
         return IptvData(live, movies, shows)

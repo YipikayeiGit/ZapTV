@@ -27,6 +27,7 @@ import com.google.android.material.progressindicator.LinearProgressIndicator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -124,14 +125,14 @@ class MainActivity : AppCompatActivity() {
         content.setHasFixedSize(true)
         content.setItemViewCacheSize(24)
 
-        tab = runCatching { Tab.valueOf(prefs.getString("tab", "LIVE")!!) }.getOrDefault(Tab.LIVE)
+        tab = runCatching { Tab.valueOf(prefs.getString("tab", "MOVIES")!!) }.getOrDefault(Tab.MOVIES)
         for ((t, v) in tabs) v.setOnClickListener { selectTab(t) }
 
         findViewById<View>(R.id.settings).setOnClickListener { showSources() }
         findViewById<View>(R.id.reload).setOnClickListener { reloadAll() }
         emptyAdd.setOnClickListener { if (tab == Tab.LIVE) showAddDialog() else showSources() }
         findViewById<EditText>(R.id.search).doAfterTextChanged { text ->
-            query = fold(text?.toString()?.trim().orEmpty())
+            query = text?.toString()?.trim().orEmpty()
             typingJob?.cancel()
             typingJob = lifecycleScope.launch {
                 delay(150)
@@ -146,10 +147,12 @@ class MainActivity : AppCompatActivity() {
         val handled = savedInstanceState == null && handleIntent(intent)
         lifecycleScope.launch {
             val src = prefs.getString(KEY_SRC, null)
-            val (iptv, plex) = withContext(Dispatchers.IO) {
-                (if (handled) null else runCatching { Iptv.loadCached(this@MainActivity, src) }.getOrNull()) to
-                    Plex.loadCached(this@MainActivity)
+            val iptvJob = async(Dispatchers.IO) {
+                if (handled) null else runCatching { Iptv.loadCached(this@MainActivity, src) }.getOrNull()
             }
+            val plexJob = async(Dispatchers.IO) { runCatching { Plex.loadCached(this@MainActivity) }.getOrNull() }
+            val iptv = iptvJob.await()
+            val plex = plexJob.await()
             if (iptv != null) Catalog.iptv = iptv
             if (plex != null) Catalog.plex = plex
             rebuild()
@@ -303,7 +306,7 @@ class MainActivity : AppCompatActivity() {
                         null -> if (favs.isEmpty()) src else src.filter { it.url in favs } + src.filter { it.url !in favs }
                         else -> src.filter { it.group == g }
                     }
-                    if (q.isEmpty()) inGroup else inGroup.filter { it.key.contains(q) }
+                    if (q.isEmpty()) inGroup else Search.channels(inGroup, q)
                 }
                 useAdapter(channelAdapter)
                 channelAdapter.submit(res)
@@ -314,13 +317,14 @@ class MainActivity : AppCompatActivity() {
                     val genres = if (shows) Catalog.showGenres else Catalog.movieGenres
                     val resume = resumeItems(shows)
                     val watch = if (shows) Catalog.watchShows else Catalog.watchMovies
-                    val rows = withContext(Dispatchers.Default) { Home.rows(src, resume, genres, watch) }
+                    val newEps = if (shows) Catalog.newEpisodes else emptyList()
+                    val rows = withContext(Dispatchers.Default) { Home.rows(src, resume, genres, watch, newEps) }
                     useAdapter(rowsAdapter)
                     rowsAdapter.submit(rows)
                 } else {
                     val res = withContext(Dispatchers.Default) {
                         when {
-                            q.isNotEmpty() -> src.filter { it.key.contains(q) }
+                            q.isNotEmpty() -> Search.items(src, q)
                             f is VodFilter.From -> src.filter { f.origin in it.origins }.sortedByDescending { it.added }
                             f is VodFilter.Genre -> Home.byGenre(src, f.name)
                             else -> src
@@ -385,6 +389,33 @@ class MainActivity : AppCompatActivity() {
             }
             renderChips()
             refresh()
+            checkNewEpisodes()
+        }
+    }
+
+    private var newEpisodesJob: Job? = null
+
+    /** Series que estabas viendo con capítulos nuevos (se revisa como mucho cada 2 horas). */
+    private fun checkNewEpisodes() {
+        val shows = Catalog.shows
+        if (shows.isEmpty()) return
+        val byKey = shows.associateBy { it.key }
+        Catalog.newEpisodes = Episodes.newKeys(this).mapNotNull { byKey[it] }
+        if (newEpisodesJob?.isActive == true) return
+        if (System.currentTimeMillis() - Episodes.lastCheck(this) < 2 * 60 * 60 * 1000L) return
+        newEpisodesJob = lifecycleScope.launch {
+            val keys = withContext(Dispatchers.IO) {
+                runCatching { Episodes.checkNew(this@MainActivity, shows) }.getOrNull()
+            } ?: return@launch
+            val found = keys.mapNotNull { byKey[it] }
+            Catalog.newEpisodes = found
+            if (found.isNotEmpty()) {
+                toast(
+                    if (found.size == 1) "Hay capítulos nuevos de ${found[0].title}"
+                    else "Hay capítulos nuevos de ${found.size} series que estás viendo"
+                )
+            }
+            if (tab == Tab.SHOWS) refresh()
         }
     }
 
