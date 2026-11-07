@@ -77,61 +77,113 @@ object Plex {
 
     // ---------- Biblioteca ----------
 
+    /** Informe de la última carga, para Ajustes → Plex → Estado. */
+    var status: String
+        get() = prefs.getString("plex_status", null) ?: "Todavía no se ha cargado Plex."
+        private set(v) = prefs.edit().putString("plex_status", v).apply()
+
     suspend fun refresh(ctx: Context): PlexData = coroutineScope {
         val tok = token ?: return@coroutineScope PlexData.EMPTY
         val res = JSONArray(
-            Http.get("https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1", headers(tok))
+            Http.get("https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1&includeIPv6=1", headers(tok))
         )
         val candidates = (0 until res.length())
             .mapNotNull { res.optJSONObject(it) }
             .filter { it.optString("provides").contains("server") }
 
-        val found = candidates.map { r -> async(Dispatchers.IO) { connect(r, tok) } }.awaitAll().filterNotNull()
+        val conns = candidates.map { r -> async(Dispatchers.IO) { r to connect(r, tok) } }.awaitAll()
+        val found = conns.mapNotNull { it.second.first }
         servers = found.associateBy { it.id }
         val multi = found.size > 1
 
-        val parts = found.map { s ->
-            async(Dispatchers.IO) { runCatching { library(s, multi) }.getOrDefault(PlexData.EMPTY) }
+        val parts = conns.map { (r, c) ->
+            async(Dispatchers.IO) {
+                val shared = if (r.optBoolean("owned")) "" else " (compartido)"
+                val name = r.optString("name").ifEmpty { "Servidor" } + shared
+                val s = c.first
+                if (s == null) {
+                    PlexData.EMPTY to "• $name: ${c.second}"
+                } else {
+                    try {
+                        val d = library(s, multi)
+                        d to "• $name: conectado (${c.second}) · ${d.movies.size} pelis · ${d.shows.size} series"
+                    } catch (e: Exception) {
+                        PlexData.EMPTY to "• $name: conectado (${c.second}) pero no se pudo leer la biblioteca: ${e.message ?: e.javaClass.simpleName}"
+                    }
+                }
+            }
         }.awaitAll()
 
-        val data = PlexData(found, parts.flatMap { it.movies }, parts.flatMap { it.shows })
+        status = buildString {
+            append("Cuenta: ").append(user ?: "conectada").append('\n')
+            if (candidates.isEmpty()) {
+                append("No aparece ningún servidor en esta cuenta. Comprueba que el dueño ha compartido sus bibliotecas con este usuario de Plex y que has aceptado la invitación.")
+            } else {
+                append(parts.joinToString("\n") { it.second })
+            }
+        }
+
+        val data = PlexData(found, parts.flatMap { it.first.movies }, parts.flatMap { it.first.shows })
         save(ctx, data)
         data
     }
 
-    /** Prueba las conexiones del servidor: primero la local, luego la remota y por último el relay. */
-    private fun connect(r: JSONObject, fallbackToken: String): PlexServer? {
+    /**
+     * Prueba todas las direcciones del servidor a la vez y se queda con la mejor:
+     * local, luego remota directa y por último el relay de Plex.
+     */
+    private suspend fun connect(r: JSONObject, fallbackToken: String): Pair<PlexServer?, String> = coroutineScope {
         val tok = r.str("accessToken") ?: fallbackToken
-        val conns = r.optJSONArray("connections") ?: return null
-        val list = (0 until conns.length())
-            .mapNotNull { conns.optJSONObject(it) }
-            .sortedBy { c ->
-                when {
-                    c.optBoolean("relay") -> 2
-                    c.optBoolean("local") -> 0
-                    else -> 1
-                }
+        val conns = r.optJSONArray("connections")
+        val list = if (conns == null) emptyList() else (0 until conns.length()).mapNotNull { conns.optJSONObject(it) }
+        if (list.isEmpty()) return@coroutineScope (null to "el servidor no publica ninguna dirección (¿está apagado?)")
+
+        val ok = list.map { c ->
+            async(Dispatchers.IO) {
+                val uri = c.str("uri") ?: return@async null
+                if (runCatching { Http.get("$uri/identity", headers(tok), timeout = 7_000) }.isSuccess) c else null
             }
-        for (c in list) {
-            val uri = c.str("uri") ?: continue
-            val ok = runCatching { Http.get("$uri/identity", headers(tok), timeout = 4_000) }.isSuccess
-            if (ok) return PlexServer(r.optString("clientIdentifier"), r.optString("name"), uri, tok)
+        }.awaitAll().filterNotNull()
+
+        val best = ok.minByOrNull { c ->
+            when {
+                c.optBoolean("relay") -> 2
+                c.optBoolean("local") -> 0
+                else -> 1
+            }
+        } ?: return@coroutineScope (null to "sin conexión (${list.size} direcciones probadas). Puede que el servidor esté apagado o sin acceso remoto.")
+
+        val kind = when {
+            best.optBoolean("relay") -> "relay de Plex, calidad limitada"
+            best.optBoolean("local") -> "red local"
+            else -> "remoto"
         }
-        return null
+        PlexServer(r.optString("clientIdentifier"), r.optString("name"), best.getString("uri"), tok) to kind
     }
 
     private fun library(s: PlexServer, multi: Boolean): PlexData {
         val sections = JSONObject(Http.get("${s.uri}/library/sections", headers(s.token)))
             .optJSONObject("MediaContainer")?.optJSONArray("Directory") ?: return PlexData.EMPTY
+        val dirs = (0 until sections.length()).mapNotNull { sections.optJSONObject(it) }
+        val movieLibs = dirs.count { it.optString("type") == "movie" }
+        val showLibs = dirs.count { it.optString("type") == "show" }
         val movies = ArrayList<Movie>()
         val shows = ArrayList<Show>()
-        for (i in 0 until sections.length()) {
-            val d = sections.optJSONObject(i) ?: continue
+        var lastError: Exception? = null
+
+        for (d in dirs) {
             val type = d.optString("type")
             if (type != "movie" && type != "show") continue
-            val items = JSONObject(
-                Http.get("${s.uri}/library/sections/${d.optString("key")}/all", headers(s.token), timeout = 90_000)
-            ).optJSONObject("MediaContainer")?.optJSONArray("Metadata") ?: continue
+            // Con varias bibliotecas del mismo tipo, su nombre sirve de categoría ("Infantil", "4K"…)
+            val libName = d.str("title")?.takeIf { (if (type == "movie") movieLibs else showLibs) > 1 }
+            val items: JSONArray = (try {
+                JSONObject(
+                    Http.get("${s.uri}/library/sections/${d.optString("key")}/all", headers(s.token), timeout = 120_000)
+                ).optJSONObject("MediaContainer")?.optJSONArray("Metadata")
+            } catch (e: Exception) {
+                lastError = e
+                null
+            }) ?: continue
 
             for (j in 0 until items.length()) {
                 val m = items.optJSONObject(j) ?: continue
@@ -140,19 +192,32 @@ object Plex {
                 val poster = m.str("thumb")?.let { poster(s, it) }
                 val key = m.optString("ratingKey")
                 val plot = m.str("summary")
+                val added = m.optLong("addedAt")
+                val rating = (m.optDouble("audienceRating").takeIf { !it.isNaN() && it > 0 }
+                    ?: m.optDouble("rating").takeIf { !it.isNaN() && it > 0 })?.toFloat()
+                val genres = buildList {
+                    m.optJSONArray("Genre")?.let { a ->
+                        for (g in 0 until a.length()) a.optJSONObject(g)?.str("tag")?.let { add(it) }
+                    }
+                    libName?.let { add(it) }
+                }
                 if (type == "movie") {
                     val res = m.optJSONArray("Media")?.optJSONObject(0)?.str("videoResolution")
                     val label = listOfNotNull("Plex", resLabel(res), s.name.takeIf { multi }).joinToString(" · ")
                     movies += Movie(
                         title, year, poster,
                         listOf(SourceRef(Origin.PLEX, label, plexServer = s.id, plexKey = key)),
-                        plot,
+                        plot, added, rating, genres,
                     )
                 } else {
-                    shows += Show(title, year, poster, plot, plex = listOf(PlexRef(s.id, key)))
+                    shows += Show(
+                        title, year, poster, plot, plex = listOf(PlexRef(s.id, key)),
+                        added = added, rating = rating, genres = genres,
+                    )
                 }
             }
         }
+        if (movies.isEmpty() && shows.isEmpty()) lastError?.let { throw it }
         return PlexData(listOf(s), movies, shows)
     }
 
@@ -277,17 +342,24 @@ object Plex {
             d.movies.forEach { m ->
                 val src = m.sources.first()
                 put(JSONObject().put("t", m.title).put("y", m.year ?: 0).put("p", m.poster ?: "")
-                    .put("d", m.plot ?: "").put("s", src.plexServer).put("k", src.plexKey).put("l", src.label))
+                    .put("d", m.plot ?: "").put("s", src.plexServer).put("k", src.plexKey).put("l", src.label)
+                    .put("a", m.added).put("r", (m.rating ?: 0f).toDouble()).put("g", JSONArray(m.genres)))
             }
         })
         j.put("shows", JSONArray().apply {
             d.shows.forEach { s ->
                 val ref = s.plex.first()
                 put(JSONObject().put("t", s.title).put("y", s.year ?: 0).put("p", s.poster ?: "")
-                    .put("d", s.plot ?: "").put("s", ref.server).put("k", ref.key))
+                    .put("d", s.plot ?: "").put("s", ref.server).put("k", ref.key)
+                    .put("a", s.added).put("r", (s.rating ?: 0f).toDouble()).put("g", JSONArray(s.genres)))
             }
         })
         cacheFile(ctx).writeText(j.toString())
+    }
+
+    private fun genresOf(o: JSONObject): List<String> {
+        val a = o.optJSONArray("g") ?: return emptyList()
+        return (0 until a.length()).mapNotNull { a.optString(it).takeIf { g -> g.isNotEmpty() } }
     }
 
     fun loadCached(ctx: Context): PlexData? {
@@ -308,6 +380,9 @@ object Plex {
                         o.getString("t"), o.optInt("y").takeIf { it > 0 }, o.str("p"),
                         listOf(SourceRef(Origin.PLEX, o.optString("l", "Plex"), plexServer = o.getString("s"), plexKey = o.getString("k"))),
                         o.str("d"),
+                        o.optLong("a"),
+                        o.optDouble("r").takeIf { !it.isNaN() && it > 0 }?.toFloat(),
+                        genresOf(o),
                     )
                 }
             }
@@ -317,6 +392,9 @@ object Plex {
                     Show(
                         o.getString("t"), o.optInt("y").takeIf { it > 0 }, o.str("p"), o.str("d"),
                         plex = listOf(PlexRef(o.getString("s"), o.getString("k"))),
+                        added = o.optLong("a"),
+                        rating = o.optDouble("r").takeIf { !it.isNaN() && it > 0 }?.toFloat(),
+                        genres = genresOf(o),
                     )
                 }
             }

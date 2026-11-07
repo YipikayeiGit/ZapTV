@@ -58,7 +58,12 @@ class DetailActivity : AppCompatActivity() {
 
         findViewById<TextView>(R.id.title).text = item.title
         findViewById<TextView>(R.id.meta).text =
-            listOfNotNull(item.year?.toString(), item.badge).joinToString("  ·  ")
+            listOfNotNull(
+                item.year?.toString(),
+                item.rating?.let { "★ %.1f".format(it) },
+                item.genres.take(3).joinToString(", ").ifEmpty { null },
+                item.badge,
+            ).joinToString("  ·  ")
         findViewById<TextView>(R.id.plot).apply {
             text = item.plot
             isVisible = !item.plot.isNullOrBlank()

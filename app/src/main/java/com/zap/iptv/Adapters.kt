@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import coil.dispose
 import coil.load
@@ -105,6 +106,8 @@ class ChipAdapter(private val onPick: (Int) -> Unit) :
 /** Cuadrícula de carátulas para pelis y series. */
 class PosterAdapter(
     private val spans: () -> Int,
+    /** Ancho fijo (filas horizontales); 0 = repartir el ancho en columnas. */
+    private val fixedWidthPx: Int = 0,
     private val onClick: (CatalogItem) -> Unit,
 ) : RecyclerView.Adapter<PosterAdapter.VH>() {
 
@@ -140,7 +143,12 @@ class PosterAdapter(
         val total = if (parent.width > 0) parent.width - parent.paddingLeft - parent.paddingRight
         else parent.resources.displayMetrics.widthPixels
         val pad = v.paddingLeft + v.paddingRight
-        val w = total / spans() - pad
+        val w = if (fixedWidthPx > 0) {
+            v.layoutParams = v.layoutParams.apply { width = fixedWidthPx + pad }
+            fixedWidthPx
+        } else {
+            total / spans() - pad
+        }
         h.box.layoutParams = h.box.layoutParams.apply { height = (w * 1.5f).toInt() }
         return h
     }
@@ -203,4 +211,47 @@ class EpisodeAdapter(private val onClick: (Episode) -> Unit) :
     }
 
     override fun getItemCount() = items.size
+}
+
+/** Pantalla de inicio: una fila horizontal de carátulas por categoría. */
+class RowsAdapter(private val onClick: (CatalogItem) -> Unit) :
+    RecyclerView.Adapter<RowsAdapter.VH>() {
+
+    private var rows: List<Row> = emptyList()
+
+    @SuppressLint("NotifyDataSetChanged")
+    fun submit(list: List<Row>) {
+        rows = list
+        notifyDataSetChanged()
+    }
+
+    inner class VH(v: View) : RecyclerView.ViewHolder(v) {
+        val title: TextView = v.findViewById(R.id.rowTitle)
+        val list: RecyclerView = v.findViewById(R.id.rowList)
+        val adapter: PosterAdapter
+
+        init {
+            val dm = v.resources.displayMetrics
+            val wideScreen = dm.widthPixels / dm.density > 700
+            val w = ((if (wideScreen) 130 else 108) * dm.density).toInt()
+            adapter = PosterAdapter({ 1 }, w, onClick)
+            list.layoutManager = LinearLayoutManager(v.context, RecyclerView.HORIZONTAL, false)
+            list.adapter = adapter
+            list.isFocusable = false
+            list.setHasFixedSize(true)
+            list.setItemViewCacheSize(8)
+        }
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
+        VH(LayoutInflater.from(parent.context).inflate(R.layout.item_row, parent, false))
+
+    override fun onBindViewHolder(h: VH, position: Int) {
+        val row = rows[position]
+        h.title.text = row.title
+        h.adapter.submit(row.items)
+        h.list.scrollToPosition(0)
+    }
+
+    override fun getItemCount() = rows.size
 }

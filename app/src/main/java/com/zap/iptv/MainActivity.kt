@@ -40,7 +40,15 @@ class MainActivity : AppCompatActivity() {
     private var tab = Tab.LIVE
     private var liveGroups: List<String> = emptyList()
     private var liveGroup: String? = null
-    private var vodOrigin: Origin? = null
+    private sealed class VodFilter {
+        object Home : VodFilter()
+        object AZ : VodFilter()
+        data class From(val origin: Origin) : VodFilter()
+        data class Genre(val name: String) : VodFilter()
+    }
+
+    private var vodFilters: List<VodFilter> = listOf(VodFilter.Home)
+    private var vodFilter: VodFilter = VodFilter.Home
     private var query = ""
     private var typingJob: Job? = null
     private var filterJob: Job? = null
@@ -57,6 +65,7 @@ class MainActivity : AppCompatActivity() {
 
     private val channelAdapter = ChannelAdapter { pos -> openChannel(pos) }
     private val posterAdapter = PosterAdapter({ spans() }) { item -> openDetail(item) }
+    private val rowsAdapter = RowsAdapter { item -> openDetail(item) }
     private val chipAdapter = ChipAdapter { pos -> onChip(pos) }
 
     private val pickFile =
@@ -142,18 +151,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun selectTab(t: Tab) {
+        if (t != tab) vodFilter = VodFilter.Home
         tab = t
         prefs.edit { putString("tab", t.name) }
         for ((k, v) in tabs) v.isSelected = k == t
-        if (t == Tab.LIVE) {
-            content.layoutManager = LinearLayoutManager(this)
-            content.adapter = channelAdapter
-        } else {
-            content.layoutManager = GridLayoutManager(this, spans())
-            content.adapter = posterAdapter
-        }
         renderChips()
         refresh(scrollTop = true)
+    }
+
+    /** Cambia la lista de contenido (canales, filas o cuadrícula) solo si hace falta. */
+    private fun useAdapter(a: RecyclerView.Adapter<*>) {
+        if (content.adapter === a) return
+        content.layoutManager = if (a === posterAdapter) GridLayoutManager(this, spans()) else LinearLayoutManager(this)
+        content.adapter = a
     }
 
     private fun renderChips() {
@@ -165,26 +175,56 @@ class MainActivity : AppCompatActivity() {
             chips.isVisible = liveGroups.size > 1
         } else {
             val list: List<CatalogItem> = if (tab == Tab.MOVIES) Catalog.movies else Catalog.shows
+            val genres = if (tab == Tab.MOVIES) Catalog.movieGenres else Catalog.showGenres
             val both = list.any { Origin.PLEX in it.origins } && list.any { Origin.IPTV in it.origins }
-            if (!both) vodOrigin = null
-            chipAdapter.submit(listOf("Todo", "Plex", "IPTV"), when (vodOrigin) {
-                Origin.PLEX -> 1; Origin.IPTV -> 2; null -> 0
-            })
-            chips.isVisible = both
+            vodFilters = buildList {
+                add(VodFilter.Home)
+                add(VodFilter.AZ)
+                if (both) {
+                    add(VodFilter.From(Origin.PLEX))
+                    add(VodFilter.From(Origin.IPTV))
+                }
+                genres.take(40).forEach { add(VodFilter.Genre(it)) }
+            }
+            if (vodFilter !in vodFilters) vodFilter = VodFilter.Home
+            val labels = vodFilters.map { f ->
+                when (f) {
+                    VodFilter.Home -> "Inicio"
+                    VodFilter.AZ -> "Todo A–Z"
+                    is VodFilter.From -> "Solo ${f.origin.label}"
+                    is VodFilter.Genre -> f.name
+                }
+            }
+            chipAdapter.submit(labels, vodFilters.indexOf(vodFilter).coerceAtLeast(0))
+            chips.isVisible = list.isNotEmpty()
         }
     }
 
     private fun onChip(pos: Int) {
         if (tab == Tab.LIVE) liveGroup = if (pos == 0) null else liveGroups.getOrNull(pos - 1)
-        else vodOrigin = when (pos) { 1 -> Origin.PLEX; 2 -> Origin.IPTV; else -> null }
+        else vodFilter = vodFilters.getOrElse(pos) { VodFilter.Home }
         refresh(scrollTop = true)
+    }
+
+    /** Lo que se dejó a medias, de lo más reciente a lo más antiguo. */
+    private fun resumeItems(shows: Boolean): List<CatalogItem> {
+        val pos = getSharedPreferences("resume", MODE_PRIVATE).all.keys
+        val times = getSharedPreferences("resume_t", MODE_PRIVATE)
+        val prefix = if (shows) "ep:" else "movie:"
+        val byKey: Map<String, CatalogItem> =
+            (if (shows) Catalog.shows else Catalog.movies).associateBy { it.key }
+        return pos.filter { it.startsWith(prefix) }
+            .sortedByDescending { times.getLong(it, 0L) }
+            .mapNotNull { k -> byKey[k.removePrefix(prefix).substringBefore(':')] }
+            .distinct()
+            .take(20)
     }
 
     private fun refresh(scrollTop: Boolean = false) {
         val t = tab
         val q = query
         val g = liveGroup
-        val o = vodOrigin
+        val f = vodFilter
         filterJob?.cancel()
         filterJob = lifecycleScope.launch {
             if (t == Tab.LIVE) {
@@ -193,22 +233,45 @@ class MainActivity : AppCompatActivity() {
                     if (g == null && q.isEmpty()) src
                     else src.filter { (g == null || it.group == g) && (q.isEmpty() || it.key.contains(q)) }
                 }
+                useAdapter(channelAdapter)
                 channelAdapter.submit(res)
             } else {
-                val src: List<CatalogItem> = if (t == Tab.MOVIES) Catalog.movies else Catalog.shows
-                val res = withContext(Dispatchers.Default) {
-                    if (o == null && q.isEmpty()) src
-                    else src.filter { (o == null || o in it.origins) && (q.isEmpty() || it.key.contains(q)) }
+                val shows = t == Tab.SHOWS
+                val src: List<CatalogItem> = if (shows) Catalog.shows else Catalog.movies
+                if (q.isEmpty() && f == VodFilter.Home) {
+                    val genres = if (shows) Catalog.showGenres else Catalog.movieGenres
+                    val resume = resumeItems(shows)
+                    val rows = withContext(Dispatchers.Default) { Home.rows(src, resume, genres) }
+                    useAdapter(rowsAdapter)
+                    rowsAdapter.submit(rows)
+                } else {
+                    val res = withContext(Dispatchers.Default) {
+                        when {
+                            q.isNotEmpty() -> src.filter { it.key.contains(q) }
+                            f is VodFilter.From -> src.filter { f.origin in it.origins }.sortedByDescending { it.added }
+                            f is VodFilter.Genre -> Home.byGenre(src, f.name)
+                            else -> src
+                        }
+                    }
+                    useAdapter(posterAdapter)
+                    posterAdapter.submit(res)
                 }
-                posterAdapter.submit(res)
             }
             if (scrollTop) content.scrollToPosition(0)
             updateEmpty()
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Al volver del reproductor, actualizar "Seguir viendo"
+        if (tab != Tab.LIVE && vodFilter == VodFilter.Home && query.isEmpty() && content.adapter === rowsAdapter) {
+            refresh()
+        }
+    }
+
     private fun updateEmpty() {
-        val count = if (tab == Tab.LIVE) channelAdapter.itemCount else posterAdapter.itemCount
+        val count = content.adapter?.itemCount ?: 0
         val nothing = when (tab) {
             Tab.LIVE -> Catalog.live.isEmpty()
             Tab.MOVIES -> Catalog.movies.isEmpty()
@@ -313,7 +376,13 @@ class MainActivity : AppCompatActivity() {
                 prefs.edit { putLong("plex_time", System.currentTimeMillis()) }
                 rebuild()
                 if (!silent) {
-                    if (data.servers.isEmpty()) toast("Plex: no hay servidores disponibles")
+                    if (data.movies.isEmpty() && data.shows.isEmpty()) {
+                        MaterialAlertDialogBuilder(this@MainActivity)
+                            .setTitle("Plex no ha devuelto contenido")
+                            .setMessage(Plex.status)
+                            .setPositiveButton("Entendido", null)
+                            .show()
+                    }
                     else toast("Plex: ${data.movies.size} pelis · ${data.shows.size} series")
                 }
             } catch (e: CancellationException) {
@@ -484,12 +553,20 @@ class MainActivity : AppCompatActivity() {
     private fun showPlexMenu() {
         MaterialAlertDialogBuilder(this)
             .setTitle("Plex")
-            .setItems(arrayOf("Recargar biblioteca", "Cerrar sesión")) { _, which ->
-                if (which == 0) refreshPlex()
-                else {
-                    Plex.logout(this)
-                    Catalog.plex = PlexData.EMPTY
-                    rebuild()
+            .setItems(arrayOf("Estado de la conexión", "Recargar biblioteca", "Cerrar sesión")) { _, which ->
+                when (which) {
+                    0 -> MaterialAlertDialogBuilder(this)
+                        .setTitle("Estado de Plex")
+                        .setMessage(Plex.status)
+                        .setPositiveButton("Recargar") { _, _ -> refreshPlex() }
+                        .setNegativeButton("Cerrar", null)
+                        .show()
+                    1 -> refreshPlex()
+                    else -> {
+                        Plex.logout(this)
+                        Catalog.plex = PlexData.EMPTY
+                        rebuild()
+                    }
                 }
             }
             .show()

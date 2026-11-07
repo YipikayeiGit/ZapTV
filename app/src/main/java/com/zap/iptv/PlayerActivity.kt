@@ -177,6 +177,8 @@ class PlayerActivity : AppCompatActivity() {
         resume.edit().apply {
             if (pos > 30_000 && pos < dur * 0.95) putLong(key, pos) else remove(key)
         }.apply()
+        // Cuándo se vio, para ordenar "Seguir viendo"
+        getSharedPreferences("resume_t", MODE_PRIVATE).edit().putLong(key, System.currentTimeMillis()).apply()
     }
 
     // ---------- Errores ----------

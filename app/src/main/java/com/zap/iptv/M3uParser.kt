@@ -60,7 +60,11 @@ object M3uParser {
             when {
                 c.url.contains("/movie/") -> {
                     val cl = Titles.clean(c.name)
-                    movies += Movie(cl.title, cl.year, c.logo, listOf(SourceRef(Origin.IPTV, label(c.url), url = c.url)))
+                    movies += Movie(
+                        cl.title, cl.year, c.logo,
+                        listOf(SourceRef(Origin.IPTV, label(c.url), url = c.url)),
+                        genres = listOfNotNull(Titles.category(c.group.takeIf { it != "Sin grupo" })),
+                    )
                 }
                 c.url.contains("/series/") -> {
                     val m = SE.find(c.name)
@@ -77,7 +81,10 @@ object M3uParser {
                         val key = Titles.key(cl.title)
                         val old = shows[key]
                         shows[key] = old?.copy(episodes = old.episodes + ep)
-                            ?: Show(cl.title, cl.year, c.logo, episodes = listOf(ep))
+                            ?: Show(
+                                cl.title, cl.year, c.logo, episodes = listOf(ep),
+                                genres = listOfNotNull(Titles.category(c.group.takeIf { it != "Sin grupo" })),
+                            )
                     }
                 }
                 else -> live += c

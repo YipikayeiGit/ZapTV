@@ -14,7 +14,7 @@ android {
         // Número de compilación de GitHub: así la app sabe si hay una versión más nueva
         val build = System.getenv("BUILD_NUMBER")?.toIntOrNull() ?: 1
         versionCode = build
-        versionName = "1.4 ($build)"
+        versionName = "1.5 ($build)"
     }
 
     // La clave está cifrada; su contraseña solo existe en los Secrets de GitHub (KEYSTORE_PASSWORD)

@@ -60,8 +60,12 @@ object Xtream {
             .mapNotNull { m -> m["category_id"]?.let { id -> id to (m["category_name"] ?: "") } }
             .toMap()
 
+    private fun rating(v: String?): Float? = v?.replace(',', '.')?.toFloatOrNull()?.takeIf { it > 0f && it <= 10f }
+
     fun parse(dir: File, acc: Account): IptvData {
         val liveCats = cats(File(dir, "live_cats.json"))
+        val vodCats = cats(File(dir, "vod_cats.json"))
+        val seriesCats = cats(File(dir, "series_cats.json"))
 
         val live = readFlatObjects(File(dir, "live.json"), setOf("stream_id", "name", "stream_icon", "category_id"))
             .mapNotNull { m ->
@@ -76,7 +80,7 @@ object Xtream {
 
         val movies = readFlatObjects(
             File(dir, "vod.json"),
-            setOf("stream_id", "name", "stream_icon", "container_extension", "year"),
+            setOf("stream_id", "name", "stream_icon", "container_extension", "year", "added", "rating", "category_id"),
         ).mapNotNull { m ->
             val id = m["stream_id"] ?: return@mapNotNull null
             val name = m["name"]?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
@@ -87,12 +91,15 @@ object Xtream {
                 year = m["year"]?.take(4)?.toIntOrNull() ?: c.year,
                 poster = m["stream_icon"]?.takeIf { it.isNotBlank() },
                 sources = listOf(SourceRef(Origin.IPTV, "IPTV · ${ext.uppercase()}", url = acc.movie(id, ext))),
+                added = m["added"]?.toLongOrNull() ?: 0L,
+                rating = rating(m["rating"]),
+                genres = listOfNotNull(Titles.category(vodCats[m["category_id"]])),
             )
         }
 
         val shows = readFlatObjects(
             File(dir, "series.json"),
-            setOf("series_id", "name", "cover", "plot", "year", "releaseDate"),
+            setOf("series_id", "name", "cover", "plot", "year", "releaseDate", "last_modified", "rating", "category_id"),
         ).mapNotNull { m ->
             val id = m["series_id"] ?: return@mapNotNull null
             val name = m["name"]?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
@@ -105,6 +112,9 @@ object Xtream {
                 poster = m["cover"]?.takeIf { it.isNotBlank() },
                 plot = m["plot"]?.takeIf { it.isNotBlank() },
                 xtreamIds = listOf(id),
+                added = m["last_modified"]?.toLongOrNull() ?: 0L,
+                rating = rating(m["rating"]),
+                genres = listOfNotNull(Titles.category(seriesCats[m["category_id"]])),
             )
         }
         return IptvData(live, movies, shows)

@@ -134,10 +134,9 @@
                 android:textColor="@color/muted"
                 android:textSize="16sp" />
 
-            <Button
+            <TextView
                 android:id="@+id/emptyAdd"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
+                style="@style/PrimaryButton"
                 android:layout_marginTop="20dp"
                 android:text="Añadir fuente" />
         </LinearLayout>
