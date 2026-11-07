@@ -11,8 +11,10 @@ android {
         applicationId = "com.zap.iptv"
         minSdk = 24
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.3"
+        // Número de compilación de GitHub: así la app sabe si hay una versión más nueva
+        val build = System.getenv("BUILD_NUMBER")?.toIntOrNull() ?: 1
+        versionCode = build
+        versionName = "1.4 ($build)"
     }
 
     // La clave está cifrada; su contraseña solo existe en los Secrets de GitHub (KEYSTORE_PASSWORD)

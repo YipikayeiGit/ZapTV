@@ -23,6 +23,7 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.progressindicator.LinearProgressIndicator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -129,6 +130,7 @@ class MainActivity : AppCompatActivity() {
             if (Plex.loggedIn && (plex == null || now - prefs.getLong("plex_time", 0) > STALE)) {
                 refreshPlex(silent = plex != null)
             }
+            if (now - prefs.getLong("update_check", 0) > STALE) checkUpdate(manual = false)
         }
     }
 
@@ -385,13 +387,98 @@ class MainActivity : AppCompatActivity() {
     private fun showSources() {
         val iptv = Iptv.describe(prefs.getString(KEY_SRC, null))
         val plex = if (Plex.loggedIn) "Conectado" + (Plex.user?.let { " · $it" } ?: "") else "Sin conectar"
+        val version = runCatching { Updater.versionName(this) }.getOrDefault("")
         MaterialAlertDialogBuilder(this)
-            .setTitle("Fuentes")
-            .setItems(arrayOf("Lista IPTV\n$iptv", "Plex\n$plex")) { _, which ->
-                if (which == 0) showAddDialog()
-                else if (Plex.loggedIn) showPlexMenu() else plexLogin()
+            .setTitle("Ajustes")
+            .setItems(arrayOf("Lista IPTV\n$iptv", "Plex\n$plex", "Actualizar app\nVersión $version")) { _, which ->
+                when (which) {
+                    0 -> showAddDialog()
+                    1 -> if (Plex.loggedIn) showPlexMenu() else plexLogin()
+                    else -> checkUpdate(manual = true)
+                }
             }
             .show()
+    }
+
+    // ---------- Actualizaciones ----------
+
+    private fun checkUpdate(manual: Boolean) {
+        lifecycleScope.launch {
+            val r = withContext(Dispatchers.IO) { runCatching { Updater.latest() }.getOrNull() }
+            prefs.edit { putLong("update_check", System.currentTimeMillis()) }
+            val current = runCatching { Updater.currentBuild(this@MainActivity) }.getOrDefault(Long.MAX_VALUE)
+            when {
+                r == null -> if (manual) toast("No se pudo comprobar si hay actualizaciones")
+                r.build <= current -> if (manual) toast("Ya tienes la última versión")
+                !manual && prefs.getLong("update_offered", 0) == r.build -> Unit
+                else -> {
+                    prefs.edit { putLong("update_offered", r.build) }
+                    val mb = if (r.size > 0) " · %.1f MB".format(r.size / 1_048_576.0) else ""
+                    MaterialAlertDialogBuilder(this@MainActivity)
+                        .setTitle("Nueva versión disponible")
+                        .setMessage("Hay una actualización de Zap (versión ${r.build}$mb).")
+                        .setPositiveButton("Actualizar") { _, _ -> startUpdate(r) }
+                        .setNegativeButton("Ahora no", null)
+                        .show()
+                        .getButton(AlertDialog.BUTTON_POSITIVE)?.requestFocus()
+                }
+            }
+        }
+    }
+
+    private fun startUpdate(r: Updater.Release) {
+        if (!Updater.canInstall(this)) {
+            MaterialAlertDialogBuilder(this)
+                .setTitle("Permitir actualizaciones")
+                .setMessage(
+                    "Para instalar la nueva versión, Zap necesita permiso para instalar apps.\n\n" +
+                        "Actívalo en la pantalla que se abrirá y vuelve a pulsar Actualizar."
+                )
+                .setPositiveButton("Abrir ajustes") { _, _ ->
+                    if (!Updater.openInstallPermission(this)) {
+                        MaterialAlertDialogBuilder(this)
+                            .setTitle("Permitir actualizaciones")
+                            .setMessage(
+                                "En Fire TV: Ajustes → Mi Fire TV → Opciones para desarrolladores → " +
+                                    "Instalar aplicaciones desconocidas → activa Zap."
+                            )
+                            .setPositiveButton("Entendido", null)
+                            .show()
+                    }
+                }
+                .setNegativeButton("Cancelar", null)
+                .show()
+            return
+        }
+
+        val view = LayoutInflater.from(this).inflate(R.layout.dialog_progress, null)
+        val bar = view.findViewById<LinearProgressIndicator>(R.id.bar)
+        val text = view.findViewById<TextView>(R.id.text)
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle("Descargando actualización")
+            .setView(view)
+            .setCancelable(false)
+            .show()
+
+        lifecycleScope.launch {
+            try {
+                val file = withContext(Dispatchers.IO) {
+                    Updater.download(this@MainActivity, r) { p ->
+                        runOnUiThread {
+                            bar.setProgressCompat(p, true)
+                            text.text = "$p %"
+                        }
+                    }
+                }
+                dialog.dismiss()
+                Updater.install(this@MainActivity, file)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                dialog.dismiss()
+                toast("No se pudo descargar: ${e.message ?: e.javaClass.simpleName}")
+            }
+        }
     }
 
     private fun showPlexMenu() {
