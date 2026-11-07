@@ -108,6 +108,10 @@ class PlayerActivity : AppCompatActivity() {
             }
         })
         playerView.player = player
+        // Al darle a play no se muestra la interfaz: solo con OK
+        playerView.controllerAutoShow = false
+        playerView.controllerShowTimeoutMs = 4_000
+        playerView.hideController()
         // Formato de subtítulos elegido en Ajustes
         playerView.subtitleView?.let { SubStyle.apply(this, it) }
         // Audio y subtítulos: ventana grande y clara en lugar de los menús pequeños de abajo

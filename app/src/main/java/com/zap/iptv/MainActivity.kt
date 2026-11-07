@@ -525,8 +525,8 @@ class MainActivity : AppCompatActivity() {
             Catalog.newEpisodes = found
             if (found.isNotEmpty()) {
                 toast(
-                    if (found.size == 1) "Hay capítulos nuevos de ${found[0].title}"
-                    else "Hay capítulos nuevos de ${found.size} series que estás viendo"
+                    if (found.size == 1) "Nuevo capítulo de ${found[0].title} (en Seguir viendo)"
+                    else "Nuevos capítulos de ${found.size} series que estás viendo (en Seguir viendo)"
                 )
             }
             if (tab == Tab.SHOWS || tab == Tab.HOME) refresh()

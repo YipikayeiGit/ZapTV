@@ -187,7 +187,9 @@ class PosterAdapter(
         val it = items[position]
         h.title.text = it.title
         h.year.text = it.year?.toString() ?: ""
-        h.badge.text = it.badge
+        val fresh = it is Show && Catalog.newEpisodes.any { n -> n.key == it.key }
+        h.badge.text = if (fresh) "NUEVO CAPÍTULO" else it.badge
+        h.badge.setBackgroundResource(if (fresh) R.drawable.bg_badge_new else R.drawable.bg_badge)
         if (showKind) {
             h.kind.text = if (it is Show) "SERIE" else "PELÍCULA"
             h.kind.visibility = View.VISIBLE

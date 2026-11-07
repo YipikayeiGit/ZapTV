@@ -45,6 +45,10 @@ object Episodes {
             .putInt("k:$k", maxOf(p.getInt("k:$k", 0), known))
             .putLong("t:$k", System.currentTimeMillis())
             .apply()
+        // Ya lo estás viendo: se quita la etiqueta de "nuevo capítulo"
+        val fresh = newKeys(ctx)
+        if (k in fresh) saveNewKeys(ctx, fresh - k)
+        Catalog.newEpisodes = Catalog.newEpisodes.filter { it.key != k }
     }
 
     /** Capítulos que existían la última vez que abriste la serie (0 si nunca la has visto). */
@@ -57,33 +61,50 @@ object Episodes {
         if (!watching(ctx, show)) return
         val p = prefs(ctx)
         p.edit().putInt("k:${show.key}", maxOf(p.getInt("k:${show.key}", 0), known)).apply()
-        val keys = newKeys(ctx).toMutableSet()
-        if (keys.remove(show.key)) saveNewKeys(ctx, keys)
     }
 
-    fun newKeys(ctx: Context): Set<String> = prefs(ctx).getStringSet("new", emptySet()).orEmpty()
+    /** Último capítulo visto (código temporada*10000+capítulo) y cuándo viste la serie por última vez. */
+    fun lastCode(ctx: Context, show: CatalogItem): Int = prefs(ctx).getInt("p:${show.key}", 0)
+    fun lastTime(ctx: Context, show: CatalogItem): Long = prefs(ctx).getLong("t:${show.key}", 0L)
+
+    private const val RECENT = 90L * 24 * 60 * 60 * 1000
+
+    /**
+     * Capítulo nuevo de verdad: estrenado DESPUÉS de la última vez que viste la serie,
+     * hace poco, y posterior al último que viste. (Una serie antigua que vas viendo
+     * poco a poco no tiene "capítulos nuevos": solo te faltan por ver.)
+     */
+    fun isNew(e: Episode, lastCode: Int, lastTime: Long): Boolean =
+        lastTime > 0 && e.aired > lastTime && code(e) > lastCode &&
+            e.aired > System.currentTimeMillis() - RECENT
+
+    fun newKeys(ctx: Context): Set<String> = prefs(ctx).getStringSet("new2", emptySet()).orEmpty()
 
     private fun saveNewKeys(ctx: Context, keys: Set<String>) {
-        prefs(ctx).edit().putStringSet("new", HashSet(keys)).apply()
+        prefs(ctx).edit().putStringSet("new2", HashSet(keys)).apply()
     }
 
-    fun lastCheck(ctx: Context): Long = prefs(ctx).getLong("checked", 0)
+    fun lastCheck(ctx: Context): Long = prefs(ctx).getLong("checked2", 0)
 
-    /** Revisa las series que estás viendo (las 20 más recientes) buscando capítulos nuevos. */
+    /** Revisa las series que estás viendo (vistas en los últimos 4 meses) buscando estrenos. */
     suspend fun checkNew(ctx: Context, shows: List<Show>): Set<String> = coroutineScope {
         val p = prefs(ctx)
-        val keys = p.all.keys.filter { it.startsWith("p:") }.map { it.removePrefix("p:") }
+        val since = System.currentTimeMillis() - 120L * 24 * 60 * 60 * 1000
+        val keys = p.all.keys.filter { it.startsWith("t:") }.map { it.removePrefix("t:") }
+            .filter { p.getLong("t:$it", 0) > since }
             .sortedByDescending { p.getLong("t:$it", 0) }
-            .take(20)
+            .take(25)
         val byKey = shows.associateBy { it.key }
         val found = keys.mapNotNull { byKey[it] }.map { s ->
             async(Dispatchers.IO) {
                 val eps = runCatching { load(ctx, s) }.getOrDefault(emptyList())
-                if (eps.isNotEmpty() && maxCode(eps) > p.getInt("k:${s.key}", 0)) s.key else null
+                val lc = p.getInt("p:${s.key}", 0)
+                val lt = p.getLong("t:${s.key}", 0L)
+                if (eps.any { isNew(it, lc, lt) }) s.key else null
             }
         }.awaitAll().filterNotNull().toSet()
         saveNewKeys(ctx, found)
-        p.edit().putLong("checked", System.currentTimeMillis()).apply()
+        p.edit().putLong("checked2", System.currentTimeMillis()).apply()
         found
     }
 }

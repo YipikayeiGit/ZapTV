@@ -39,8 +39,10 @@ class DetailActivity : AppCompatActivity() {
 
     private val seasonAdapter = ChipAdapter { pos -> showSeason(pos) }
     private var knownBefore = 0
+    private var lastCodeBefore = 0
+    private var lastTimeBefore = 0L
     private val episodeAdapter = EpisodeAdapter(
-        isNew = { ep -> knownBefore > 0 && Episodes.code(ep) > knownBefore },
+        isNew = { ep -> Episodes.isNew(ep, lastCodeBefore, lastTimeBefore) },
         isWatched = { ep -> ep.watched || epKey(ep) in watchedKeys() },
         progress = { ep ->
             val pos = getSharedPreferences("resume", MODE_PRIVATE).getLong(epKey(ep), 0L).takeIf { it > 0 } ?: ep.offsetMs
@@ -292,6 +294,8 @@ class DetailActivity : AppCompatActivity() {
 
         // Capítulos que existían la última vez: los posteriores se marcan como NUEVO
         knownBefore = Episodes.known(this, s)
+        lastCodeBefore = Episodes.lastCode(this, s)
+        lastTimeBefore = Episodes.lastTime(this, s)
         val watching = Episodes.watching(this, s)
 
         lifecycleScope.launch {
@@ -307,7 +311,7 @@ class DetailActivity : AppCompatActivity() {
             seasonsView.isVisible = seasons.size > 1
 
             // Seleccionar el siguiente al último visto (o el que esté a medias)
-            val firstNew = if (watching && knownBefore > 0) episodes.firstOrNull { Episodes.code(it) > knownBefore } else null
+            val firstNew = if (watching) episodes.firstOrNull { Episodes.isNew(it, lastCodeBefore, lastTimeBefore) } else null
             val target = nextToWatch(s) ?: firstNew ?: episodes.first()
             val pos = seasons.indexOf(target.season).coerceAtLeast(0)
             seasonAdapter.submit(seasons.map { if (it == 0) "Especiales" else "Temporada $it" }, pos)
@@ -320,7 +324,6 @@ class DetailActivity : AppCompatActivity() {
                 ).show()
             }
             Episodes.markSeen(this@DetailActivity, s, Episodes.maxCode(episodes))
-            Catalog.newEpisodes = Catalog.newEpisodes.filter { it.key != s.key }
         }
     }
 

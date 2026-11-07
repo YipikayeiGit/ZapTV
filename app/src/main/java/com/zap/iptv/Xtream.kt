@@ -214,6 +214,8 @@ object Xtream {
                 thumb = info?.str("movie_image")?.takeIf { it.startsWith("http") },
                 summary = info?.str("plot"),
                 minutes = info?.optLong("duration_secs")?.takeIf { it > 0 }?.let { (it / 60).toInt() },
+                aired = parseDate(info?.str("releasedate") ?: info?.str("air_date") ?: info?.str("releaseDate"))
+                    .takeIf { it > 0 } ?: ((e.str("added")?.toLongOrNull() ?: 0L) * 1000),
             )
         }
 

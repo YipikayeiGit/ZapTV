@@ -151,6 +151,8 @@ data class Episode(
     /** Visto en Plex, y por dónde ibas si está a medias. */
     val watched: Boolean = false,
     val offsetMs: Long = 0,
+    /** Fecha de estreno (o de alta si no se sabe), en milisegundos. 0 = desconocida. */
+    val aired: Long = 0,
 )
 
 data class IptvData(val live: List<Channel>, val movies: List<Movie>, val shows: List<Show>) {
@@ -362,6 +364,17 @@ data class Info(
     val trailers: List<Trailer> = emptyList(),
 )
 
+/** "2026-10-30" → milisegundos (0 si no se entiende). */
+fun parseDate(v: String?): Long {
+    val t = v?.trim()?.take(10) ?: return 0
+    if (t.length < 10) return 0
+    return runCatching {
+        java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }.parse(t)?.time ?: 0L
+    }.getOrDefault(0L)
+}
+
 /** Lo que se va a reproducir (compartido con el reproductor). */
 data class Sub(val url: String, val lang: String?, val label: String?, val mime: String, val forced: Boolean = false)
 
@@ -486,6 +499,7 @@ object Merge {
                 minutes = o.minutes ?: e.minutes,
                 watched = o.watched || e.watched,
                 offsetMs = maxOf(o.offsetMs, e.offsetMs),
+                aired = if (o.aired > 0) o.aired else e.aired,
             )
         }
         return map.values.sortedWith(compareBy({ it.season }, { it.number }))
@@ -632,8 +646,9 @@ object Home {
         newEpisodes: List<CatalogItem> = emptyList(),
     ): List<Row> {
         val out = ArrayList<Row>()
-        if (newEpisodes.isNotEmpty()) out += Row("Nuevos capítulos", newEpisodes)
-        if (resume.isNotEmpty()) out += Row("Seguir viendo", resume)
+        // Las series con capítulo nuevo van las primeras de "Seguir viendo"
+        val keep = (newEpisodes + resume).distinctBy { it.key + (if (it is Show) "#s" else "#m") }
+        if (keep.isNotEmpty()) out += Row("Seguir viendo", keep)
         if (watch.isNotEmpty()) out += Row("Mi lista de Plex", watch)
 
         val recent = items.filter { it.added > 0 }.sortedByDescending { it.added }.take(40)
