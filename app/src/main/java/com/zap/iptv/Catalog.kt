@@ -674,7 +674,7 @@ object Home {
         if (fresh.size >= 5) out += Row("Estrenos", fresh)
 
         // Tendencias: lo más visto ahora mismo en Plex (de todo el mundo) que tienes en tus fuentes
-        val inHere = items.toHashSet()
+        val inHere = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<CatalogItem, Boolean>()).apply { addAll(items) }
         val trend = trending.filter { it in inHere }.take(40)
         if (trend.size >= 5) out += Row("Tendencias", trend)
 

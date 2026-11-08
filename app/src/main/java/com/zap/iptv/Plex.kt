@@ -848,29 +848,69 @@ object Plex {
         } ?: found.firstOrNull { Titles.key(it.optString("title")) == want })?.str("guid")
     }
 
-    /** Lo que es tendencia ahora en Plex (pelis y series), en el orden que da Plex. */
+    /**
+     * Lo que es tendencia ahora en Plex (pelis y series), en el orden que da Plex.
+     * Se buscan los apartados de "Tendencias"/"Populares" de Plex Discover; si no aparecen
+     * con ese nombre, se usa todo lo que Plex destaca en su portada.
+     */
     fun trending(): List<WatchItem> {
         val tok = token ?: return emptyList()
-        val urls = listOf(
-            "https://discover.provider.plex.tv/hubs/sections/home?includeMeta=1&count=30",
-            "https://discover.provider.plex.tv/hubs/promoted?includeMeta=1&count=30",
-        )
-        for (url in urls) {
-            val found = ArrayList<JSONObject>()
-            runCatching {
-                val text = Http.get(url, headers(tok), timeout = 20_000).trimStart()
-                if (text.startsWith("{")) collectMetadata(JSONObject(text), "plex://", found)
-            }
-            val items = found
-                .filter { it.optString("type") == "movie" || it.optString("type") == "show" }
-                .distinctBy { it.optString("guid") }
-                .mapNotNull { m ->
-                    val title = m.str("title") ?: return@mapNotNull null
-                    WatchItem(m.str("guid"), title, m.optInt("year").takeIf { it > 0 }, m.optString("type"))
+        val h = headers(tok) + ("X-Plex-Language" to "es")
+        val trendWords = Regex("(?i)trend|popular|tendenc|m[aá]s vist|most|top")
+        val picked = ArrayList<JSONObject>()
+        val other = ArrayList<JSONObject>()
+        for (base in listOf("https://discover.provider.plex.tv", "https://metadata.provider.plex.tv")) {
+            for (section in listOf("home", "movie", "tv", "promoted")) {
+                val url = if (section == "promoted") "$base/hubs/promoted?includeMeta=1&count=40"
+                else "$base/hubs/sections/$section?includeMeta=1&count=40"
+                val json = runCatching {
+                    val text = Http.get(url, h, timeout = 20_000).trimStart()
+                    if (text.startsWith("{")) JSONObject(text) else null
+                }.getOrNull() ?: continue
+                val hubs = ArrayList<JSONObject>()
+                collectHubs(json, hubs)
+                if (hubs.isEmpty()) collectMetadata(json, "plex://", other)
+                for (hub in hubs) {
+                    val name = listOf("title", "hubIdentifier", "context", "key").joinToString(" ") { hub.optString(it) }
+                    val metas = ArrayList<JSONObject>()
+                    collectMetadata(hub, "plex://", metas)
+                    if (!trendWords.containsMatchIn(name)) {
+                        other += metas
+                        continue
+                    }
+                    picked += metas
+                    // El apartado completo tiene más títulos que la portada
+                    val key = hub.optString("key")
+                    if (key.startsWith("/")) runCatching {
+                        val more = Http.get("$base$key${if ('?' in key) "&" else "?"}count=60", h, timeout = 20_000).trimStart()
+                        if (more.startsWith("{")) collectMetadata(JSONObject(more), "plex://", picked)
+                    }
                 }
-            if (items.isNotEmpty()) return items.take(60)
+            }
+            if (picked.isNotEmpty() || other.isNotEmpty()) break
         }
-        return emptyList()
+        return picked.ifEmpty { other }
+            .filter { it.optString("type") == "movie" || it.optString("type") == "show" }
+            .distinctBy { it.optString("guid") }
+            .mapNotNull { m ->
+                val title = m.str("title") ?: return@mapNotNull null
+                WatchItem(m.str("guid"), title, m.optInt("year").takeIf { it > 0 }, m.optString("type"))
+            }
+            .take(120)
+    }
+
+    /** Busca los apartados ("hubs") de una respuesta de Plex Discover. */
+    private fun collectHubs(v: Any?, out: MutableList<JSONObject>) {
+        when (v) {
+            is JSONObject -> {
+                if (v.has("hubIdentifier")) {
+                    out += v
+                    return
+                }
+                for (k in v.keys()) collectHubs(v.opt(k), out)
+            }
+            is JSONArray -> for (i in 0 until v.length()) collectHubs(v.opt(i), out)
+        }
     }
 
     /** Recorre la respuesta (su formato varía) buscando fichas con guid plex://… */

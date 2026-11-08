@@ -27,21 +27,5 @@ class RowList @JvmOverloads constructor(
         }
     }
 
-    override fun addFocusables(views: ArrayList<View>, direction: Int, focusableMode: Int) {
-        if (!hasFocus() && (direction == View.FOCUS_UP || direction == View.FOCUS_DOWN)) {
-            val lm = layoutManager as? LinearLayoutManager
-            if (lm != null) {
-                val target = lm.findViewByPosition(remembered)?.takeIf { isFullyShown(it) }
-                    ?: lm.findFirstCompletelyVisibleItemPosition().takeIf { it != NO_POSITION }
-                        ?.let { lm.findViewByPosition(it) }
-                if (target != null && target.isFocusable) {
-                    views.add(target)
-                    return
-                }
-            }
-        }
-        super.addFocusables(views, direction, focusableMode)
-    }
-
     private fun isFullyShown(v: View) = v.left >= paddingLeft - 1 && v.right <= width - paddingRight + 1
 }

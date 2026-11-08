@@ -1,6 +1,7 @@
 package com.zap.iptv
 
 import android.annotation.SuppressLint
+import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -145,6 +146,12 @@ class PosterAdapter(
     /** Mostrar la etiqueta SERIE / PELÍCULA (donde se mezclan ambas). */
     var showKind = false
 
+    /** ↑/↓ con el mando sobre una carátula: (posición, -1 arriba / +1 abajo) → ¿gestionado? */
+    var onVertical: ((Int, Int) -> Boolean)? = null
+
+    /** Carátula que acaba de recibir el foco (para recordar dónde estabas en cada fila). */
+    var onFocusIndex: ((Int) -> Unit)? = null
+
     @SuppressLint("NotifyDataSetChanged")
     fun submit(list: List<CatalogItem>) {
         items = list
@@ -173,7 +180,21 @@ class PosterAdapter(
                 view.animate().scaleX(s).scaleY(s).setDuration(140).start()
                 view.translationZ = if (focused) 4f else 0f
                 val p = bindingAdapterPosition
-                if (focused && p != RecyclerView.NO_POSITION) onFocus?.invoke(items[p])
+                if (focused && p != RecyclerView.NO_POSITION) {
+                    onFocusIndex?.invoke(p)
+                    onFocus?.invoke(items[p])
+                }
+            }
+            v.setOnKeyListener { _, code, ev ->
+                val dir = when (code) {
+                    KeyEvent.KEYCODE_DPAD_UP -> -1
+                    KeyEvent.KEYCODE_DPAD_DOWN -> 1
+                    else -> 0
+                }
+                val cb = onVertical
+                if (dir == 0 || cb == null || ev.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                val p = bindingAdapterPosition
+                p != RecyclerView.NO_POSITION && cb(p, dir)
             }
         }
     }
@@ -354,12 +375,55 @@ class RowsAdapter(private val onClick: (CatalogItem) -> Unit) :
 
     private var rows: List<Row> = emptyList()
 
+    /** Carátula en la que estabas en cada fila (por número de fila). */
+    private val remembered = HashMap<Int, Int>()
+    private var outer: RecyclerView? = null
+
+    override fun onAttachedToRecyclerView(recyclerView: RecyclerView) {
+        outer = recyclerView
+    }
+
+    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        if (outer === recyclerView) outer = null
+    }
+
+    /**
+     * Subir/bajar de fila: se va a la carátula en la que estabas en esa fila
+     * (o a la primera), nunca a "la más cercana en pantalla", que hacía que el
+     * foco se fuera corriendo hacia la derecha.
+     */
+    private fun moveRow(from: Int, dir: Int): Boolean {
+        val rv = outer ?: return false
+        val target = from + dir
+        if (target < 0) return false // desde la primera fila, hacia arriba: pestañas
+        if (target >= rows.size) return true // última fila: no hacer nada
+        fun focusIn(): Boolean {
+            val vh = rv.findViewHolderForAdapterPosition(target) as? VH ?: return false
+            val idx = (remembered[target] ?: 0).coerceIn(0, (vh.adapter.itemCount - 1).coerceAtLeast(0))
+            val lm = vh.list.layoutManager as LinearLayoutManager
+            val v = lm.findViewByPosition(idx)
+            if (v != null && v.left >= 0 && v.right <= vh.list.width) {
+                v.requestFocus()
+            } else {
+                lm.scrollToPositionWithOffset(idx, vh.list.paddingLeft)
+                vh.list.post { lm.findViewByPosition(idx)?.requestFocus() }
+            }
+            return true
+        }
+        if (!focusIn()) {
+            rv.scrollToPosition(target)
+            rv.post { focusIn() }
+        }
+        return true
+    }
+
     /** Mostrar la etiqueta SERIE / PELÍCULA en las carátulas. */
     var showKind = false
 
     @SuppressLint("NotifyDataSetChanged")
     fun submit(list: List<Row>) {
         rows = list
+        remembered.clear()
         notifyDataSetChanged()
     }
 
@@ -380,6 +444,14 @@ class RowsAdapter(private val onClick: (CatalogItem) -> Unit) :
                 else -> 108
             }
             adapter = PosterAdapter({ 1 }, (wDp * dm.density).toInt(), landscape, onClick)
+            adapter.onVertical = { _, dir ->
+                val row = bindingAdapterPosition
+                row != RecyclerView.NO_POSITION && moveRow(row, dir)
+            }
+            adapter.onFocusIndex = { i ->
+                val row = bindingAdapterPosition
+                if (row != RecyclerView.NO_POSITION) remembered[row] = i
+            }
             list.layoutManager = LinearLayoutManager(v.context, RecyclerView.HORIZONTAL, false)
             list.adapter = adapter
             list.isFocusable = false
@@ -396,8 +468,8 @@ class RowsAdapter(private val onClick: (CatalogItem) -> Unit) :
         h.title.text = row.title
         h.adapter.showKind = showKind
         h.adapter.submit(row.items)
-        h.list.scrollToPosition(0)
-        (h.list as? RowList)?.remembered = 0
+        val idx = remembered[position] ?: 0
+        (h.list.layoutManager as LinearLayoutManager).scrollToPositionWithOffset(idx, 0)
     }
 
     override fun getItemCount() = rows.size
