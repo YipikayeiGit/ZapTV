@@ -405,6 +405,11 @@ class MainActivity : AppCompatActivity() {
             for ((k, v) in series.all) if (k.startsWith("t:") && v is Long && v > since) {
                 shows[k.removePrefix("t:")]?.let { entries += it to v }
             }
+            // Capítulo nuevo: cuenta como "visto ahora" el día que salió el aviso
+            for (show in Catalog.newEpisodes) {
+                val at = Episodes.newSince(this, show.key)
+                if (at > 0 && shows.containsKey(show.key)) entries += show to at
+            }
         }
         return entries.sortedByDescending { it.second }.map { it.first }.distinct().take(25)
     }

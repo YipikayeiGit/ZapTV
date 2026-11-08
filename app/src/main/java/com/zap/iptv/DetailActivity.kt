@@ -419,13 +419,18 @@ class DetailActivity : AppCompatActivity() {
         if (!Plex.loggedIn) return
         val b = addSourceButton("") { }
         b.setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, 0, 0)
-        fun label() {
-            b.text = if (Watch.contains(item)) "✓  En Mi lista de Plex (quitar)" else "＋  Añadir a Mi lista de Plex"
+        fun label(inList: Boolean = Watch.contains(item)) {
+            b.text = if (inList) "✓  En Mi lista de Plex (quitar)" else "＋  Añadir a Mi lista de Plex"
         }
         label()
+        var busy = false
         b.setOnClickListener {
+            // Mientras se guarda, más pulsaciones no hacen nada (y el botón no pierde el foco)
+            if (busy) return@setOnClickListener
+            busy = true
             val add = !Watch.contains(item)
-            b.isEnabled = false
+            // Respuesta inmediata: se marca ya, y si Plex falla se deshace
+            label(add)
             lifecycleScope.launch {
                 val result = withContext(Dispatchers.IO) {
                     runCatching {
@@ -436,7 +441,7 @@ class DetailActivity : AppCompatActivity() {
                         guid
                     }
                 }
-                b.isEnabled = true
+                busy = false
                 result.onSuccess { guid ->
                     val type = if (item is Show) "show" else "movie"
                     val p = Catalog.plex
@@ -457,6 +462,7 @@ class DetailActivity : AppCompatActivity() {
                         Toast.LENGTH_SHORT,
                     ).show()
                 }.onFailure { e ->
+                    label()
                     Toast.makeText(
                         this@DetailActivity,
                         "No se pudo cambiar Mi lista: ${e.message ?: e.javaClass.simpleName}",

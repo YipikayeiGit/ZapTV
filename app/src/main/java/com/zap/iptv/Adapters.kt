@@ -293,12 +293,27 @@ class EpisodeAdapter(
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
         VH(LayoutInflater.from(parent.context).inflate(R.layout.item_episode, parent, false))
 
+    private fun fitSummary(h: VH) {
+        val list = h.itemView.parent as? View ?: return
+        val line = h.summary.lineHeight.takeIf { it > 0 } ?: return
+        val avail = list.height - list.paddingBottom - h.itemView.top - h.itemView.paddingBottom - h.summary.top
+        val lines = (avail / line).coerceAtMost(3)
+        if (lines < 1) {
+            h.summary.visibility = View.INVISIBLE
+        } else if (lines != h.summary.maxLines) {
+            h.summary.maxLines = lines
+        }
+    }
+
     override fun onBindViewHolder(h: VH, position: Int) {
         val e = items[position]
         h.num.text = e.number.toString()
         h.title.text = "${e.number}. " + (e.title ?: "Episodio ${e.number}")
         h.summary.text = e.summary ?: ""
         h.summary.visibility = if (e.summary.isNullOrBlank()) View.GONE else View.VISIBLE
+        // La sinopsis usa solo las líneas que caben en la tarjeta (si no, se cortaba por abajo)
+        h.summary.maxLines = 3
+        if (h.summary.visibility == View.VISIBLE) h.summary.post { fitSummary(h) }
         val origins = Origin.entries.filter { o -> e.sources.any { it.origin == o } }
             .joinToString(" · ") { it.label }
         h.badge.text = listOfNotNull(

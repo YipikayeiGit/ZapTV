@@ -657,8 +657,8 @@ object Home {
         newEpisodes: List<CatalogItem> = emptyList(),
     ): List<Row> {
         val out = ArrayList<Row>()
-        // Las series con capítulo nuevo van las primeras de "Seguir viendo"
-        val keep = (newEpisodes + resume).distinctBy { it.key + (if (it is Show) "#s" else "#m") }
+        // Las series con capítulo nuevo ya vienen colocadas en "resume" por la fecha del aviso
+        val keep = (resume + newEpisodes).distinctBy { it.key + (if (it is Show) "#s" else "#m") }
         if (keep.isNotEmpty()) out += Row("Seguir viendo", keep)
         if (watch.isNotEmpty()) out += Row("Mi lista de Plex", watch)
 

@@ -48,6 +48,7 @@ object Episodes {
         // Ya lo estás viendo: se quita la etiqueta de "nuevo capítulo"
         val fresh = newKeys(ctx)
         if (k in fresh) saveNewKeys(ctx, fresh - k)
+        p.edit().remove("n:$k").apply()
         Catalog.newEpisodes = Catalog.newEpisodes.filter { it.key != k }
     }
 
@@ -68,6 +69,12 @@ object Episodes {
     fun lastTime(ctx: Context, show: CatalogItem): Long = prefs(ctx).getLong("t:${show.key}", 0L)
 
     private const val RECENT = 90L * 24 * 60 * 60 * 1000
+
+    /** Capítulos sin ver a partir de los cuales se entiende que has dejado la serie. */
+    private const val MAX_PENDING = 2
+
+    /** Cuándo se avisó del capítulo nuevo (0 si no hay aviso). */
+    fun newSince(ctx: Context, key: String): Long = prefs(ctx).getLong("n:$key", 0L)
 
     /**
      * Capítulo nuevo de verdad: estrenado DESPUÉS de la última vez que viste la serie,
@@ -100,9 +107,18 @@ object Episodes {
                 val eps = runCatching { load(ctx, s) }.getOrDefault(emptyList())
                 val lc = p.getInt("p:${s.key}", 0)
                 val lt = p.getLong("t:${s.key}", 0L)
-                if (eps.any { isNew(it, lc, lt) }) s.key else null
+                // Más de 2 capítulos sin ver desde el último que viste: la has dejado, no se avisa
+                val pending = eps.count { code(it) > lc }
+                if (pending <= MAX_PENDING && eps.any { isNew(it, lc, lt) }) s.key else null
             }
         }.awaitAll().filterNotNull().toSet()
+        // Cuándo apareció el aviso: con esa fecha se coloca en "Seguir viendo"
+        // (sale la primera en ese momento y luego se va desplazando como lo demás)
+        val now = System.currentTimeMillis()
+        p.edit().apply {
+            for (k in found) if (!p.contains("n:$k")) putLong("n:$k", now)
+            for (k in p.all.keys) if (k.startsWith("n:") && k.removePrefix("n:") !in found) remove(k)
+        }.apply()
         saveNewKeys(ctx, found)
         p.edit().putLong("checked2", System.currentTimeMillis()).apply()
         found
