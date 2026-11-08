@@ -11,6 +11,7 @@
         android:allowBackup="true"
         android:largeHeap="true"
         android:banner="@drawable/banner"
+        android:logo="@drawable/banner"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:label="Zap TV"
@@ -20,6 +21,8 @@
 
         <activity
             android:name=".MainActivity"
+            android:banner="@drawable/banner"
+            android:icon="@mipmap/ic_launcher"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:exported="true"
             android:launchMode="singleTask"
