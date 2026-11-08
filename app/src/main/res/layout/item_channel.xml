@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="64dp"
+    android:layout_height="wrap_content"
+    android:minHeight="64dp"
+    android:paddingTop="6dp"
+    android:paddingBottom="6dp"
     android:background="@drawable/bg_item"
     android:clickable="true"
     android:focusable="true"
@@ -43,16 +46,60 @@
             android:scaleType="fitCenter" />
     </FrameLayout>
 
-    <TextView
-        android:id="@+id/name"
+    <LinearLayout
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginStart="14dp"
         android:layout_weight="1"
-        android:ellipsize="end"
-        android:maxLines="1"
-        android:textColor="@color/text"
-        android:textSize="16sp" />
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/text"
+            android:textSize="16sp" />
+
+        <!-- Programación (solo favoritos): ahora y después -->
+        <TextView
+            android:id="@+id/epgNow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="#E6FFFFFF"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
+        <FrameLayout
+            android:id="@+id/epgTrack"
+            android:layout_width="160dp"
+            android:layout_height="3dp"
+            android:layout_marginTop="3dp"
+            android:layout_marginBottom="2dp"
+            android:background="#33FFFFFF"
+            android:visibility="gone">
+
+            <View
+                android:id="@+id/epgFill"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:background="@color/accent" />
+        </FrameLayout>
+
+        <TextView
+            android:id="@+id/epgNext"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:textColor="@color/muted"
+            android:textSize="13sp"
+            android:visibility="gone" />
+    </LinearLayout>
 
     <TextView
         android:id="@+id/fav"

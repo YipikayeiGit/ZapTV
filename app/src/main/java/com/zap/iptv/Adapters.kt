@@ -14,6 +14,9 @@ import coil.load
 
 class ChannelAdapter(
     private val isFav: (Channel) -> Boolean = { false },
+    /** Programación ahora/después (null = hay que pedirla). */
+    private val epg: (Channel) -> Epg.NowNext? = { null },
+    private val requestEpg: (Channel) -> Unit = {},
     private val onLong: (Int) -> Unit = {},
     private val onClick: (Int) -> Unit,
 ) : RecyclerView.Adapter<ChannelAdapter.VH>() {
@@ -40,6 +43,10 @@ class ChannelAdapter(
         val initial: TextView = v.findViewById(R.id.initial)
         val logo: ImageView = v.findViewById(R.id.logo)
         val fav: TextView = v.findViewById(R.id.fav)
+        val epgNow: TextView = v.findViewById(R.id.epgNow)
+        val epgNext: TextView = v.findViewById(R.id.epgNext)
+        val epgTrack: View = v.findViewById(R.id.epgTrack)
+        val epgFill: View = v.findViewById(R.id.epgFill)
 
         init {
             v.findViewById<View>(R.id.logoBox).clipToOutline = true
@@ -63,7 +70,9 @@ class ChannelAdapter(
         val ch = items[position]
         h.num.text = (position + 1).toString()
         h.name.text = ch.name
-        h.fav.visibility = if (isFav(ch)) View.VISIBLE else View.GONE
+        val fav = isFav(ch)
+        h.fav.visibility = if (fav) View.VISIBLE else View.GONE
+        bindEpg(h, ch, fav)
         h.initial.text = ch.name.firstOrNull()?.uppercase() ?: ""
         h.initial.visibility = View.VISIBLE
         if (ch.logo != null) {
@@ -77,6 +86,24 @@ class ChannelAdapter(
             h.logo.dispose()
             h.logo.setImageDrawable(null)
         }
+    }
+
+    private fun bindEpg(h: VH, ch: Channel, fav: Boolean) {
+        val nn = if (fav) epg(ch) else null
+        if (fav && nn == null) requestEpg(ch)
+        val now = nn?.now
+        val next = nn?.next
+        h.epgNow.visibility = if (now != null) View.VISIBLE else View.GONE
+        h.epgTrack.visibility = h.epgNow.visibility
+        h.epgNext.visibility = if (next != null) View.VISIBLE else View.GONE
+        if (now != null) {
+            h.epgNow.text = "Ahora  ${Epg.time(now.start)}  ${now.title}"
+            val part = ((System.currentTimeMillis() - now.start).toFloat() / (now.end - now.start).coerceAtLeast(1))
+                .coerceIn(0f, 1f)
+            val w = (160 * h.itemView.resources.displayMetrics.density * part).toInt()
+            h.epgFill.layoutParams = h.epgFill.layoutParams.apply { width = w }
+        }
+        if (next != null) h.epgNext.text = "Después  ${Epg.time(next.start)}  ${next.title}"
     }
 
     override fun getItemCount() = items.size

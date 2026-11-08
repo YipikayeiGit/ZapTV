@@ -79,6 +79,8 @@ class MainActivity : AppCompatActivity() {
 
     private val channelAdapter = ChannelAdapter(
         isFav = { it.url in favorites },
+        epg = { Epg.nowNext(it.url) },
+        requestEpg = { requestEpg(it) },
         onLong = { pos -> toggleFavorite(pos) },
     ) { pos -> openChannel(pos) }
     private val sideAdapter = ChipAdapter(R.layout.item_side) { pos -> onSide(pos) }
@@ -368,6 +370,37 @@ class MainActivity : AppCompatActivity() {
         refresh(scrollTop = true)
     }
 
+    // ---------- Guía de programación de los favoritos ----------
+
+    private val epgLoading = HashSet<String>()
+    private val epgLimit = kotlinx.coroutines.sync.Semaphore(4)
+
+    private fun requestEpg(ch: Channel) {
+        val acc = Xtream.Account.parse(prefs.getString("src", null)) ?: return
+        if (!epgLoading.add(ch.url)) return
+        lifecycleScope.launch {
+            epgLimit.acquire()
+            try {
+                withContext(Dispatchers.IO) { Epg.fetch(acc, ch.url) }
+            } finally {
+                epgLimit.release()
+                epgLoading.remove(ch.url)
+            }
+            val i = channelAdapter.items.indexOfFirst { it.url == ch.url }
+            if (i >= 0) channelAdapter.notifyItemChanged(i, "epg")
+        }
+    }
+
+    /** Cada minuto se actualiza la barra de progreso y el programa que toca. */
+    private val epgTicker = object : Runnable {
+        override fun run() {
+            if (tab == Tab.LIVE && content.adapter === channelAdapter && channelAdapter.itemCount > 0) {
+                channelAdapter.notifyItemRangeChanged(0, channelAdapter.itemCount, "epg")
+            }
+            content.postDelayed(this, 60_000)
+        }
+    }
+
     private fun toggleFavorite(pos: Int) {
         val ch = channelAdapter.items.getOrNull(pos) ?: return
         if (!favorites.remove(ch.url)) {
@@ -489,6 +522,8 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         PosterAdapter.onFocus = { showHero(it) }
+        content.removeCallbacks(epgTicker)
+        content.postDelayed(epgTicker, 60_000)
         // Al volver del reproductor, actualizar "Seguir viendo"
         // y "Mi lista" por si has añadido o quitado algo desde una ficha
         if (query.isEmpty() && (content.adapter === rowsAdapter || tab == Tab.WATCH)) {
@@ -499,6 +534,7 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         PosterAdapter.onFocus = null
+        content.removeCallbacks(epgTicker)
     }
 
     private fun updateEmpty() {
