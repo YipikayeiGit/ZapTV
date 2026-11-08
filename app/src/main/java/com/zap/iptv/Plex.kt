@@ -628,7 +628,18 @@ object Plex {
      * "envoltorio" del archivo (a HLS) copiando el vídeo tal cual, SIN recodificarlo.
      * Solo se devuelve si Plex confirma que el vídeo va copiado (calidad original); si no, null.
      */
-    fun remux(serverId: String, key: String): String? {
+    /** Por qué no se pudo reempaquetar el último AVI (para el panel técnico). */
+    @Volatile var lastRemuxNote: String? = null
+
+    fun remux(serverId: String, key: String): String? = try {
+        remuxInner(serverId, key)
+    } catch (e: Exception) {
+        lastRemuxNote = "no reempaqueta (${e.message ?: e.javaClass.simpleName})"
+        null
+    }
+
+    private fun remuxInner(serverId: String, key: String): String? {
+        lastRemuxNote = null
         val s = servers[serverId] ?: return null
         val session = java.util.UUID.randomUUID().toString()
         val profile = "add-transcode-target(type=videoProfile&context=streaming&protocol=hls&container=mpegts" +
@@ -663,10 +674,17 @@ object Plex {
         val streams = mc.optJSONArray("Metadata")?.optJSONObject(0)
             ?.optJSONArray("Media")?.optJSONObject(0)
             ?.optJSONArray("Part")?.optJSONObject(0)
-            ?.optJSONArray("Stream") ?: return null
+            ?.optJSONArray("Stream")
+        if (streams == null) {
+            lastRemuxNote = "no reempaqueta (${mc.optString("generalDecisionText").ifEmpty { mc.optString("transcodeDecisionText") }.ifEmpty { "sin respuesta" }})"
+            return null
+        }
         val video = (0 until streams.length()).mapNotNull { streams.optJSONObject(it) }
             .firstOrNull { it.optInt("streamType") == 1 } ?: return null
-        if (video.optString("decision") != "copy") return null
+        if (video.optString("decision") != "copy") {
+            lastRemuxNote = "recodificaría el vídeo (${video.optString("decision").ifEmpty { "?" }}), no se usa"
+            return null
+        }
         return "${s.uri}/video/:/transcode/universal/start.m3u8?$qs"
     }
 

@@ -121,9 +121,29 @@ class VlcPlayerActivity : AppCompatActivity() {
     }
 
     private var hardware = true
+    private var cache: LocalCache? = null
+    private var localUrl: String? = null
+
+    /**
+     * Archivos antiguos (AVI…): se descargan en segundo plano al aparato y se reproducen
+     * desde ahí, para que los saltos internos del archivo no dependan de internet.
+     */
+    private fun sourceUri(it: PlayItem): Uri {
+        val remote = Plex.fixUrl(it.url)
+        localUrl?.let { return Uri.parse(it) }
+        val old = OLD_CODECS.containsMatchIn(it.techNote.orEmpty().lowercase())
+        if (old && remote.startsWith("http") && ".m3u8" !in remote && cacheDir.usableSpace > 1200L * 1024 * 1024) {
+            runCatching {
+                val c = LocalCache(remote, java.io.File(cacheDir, "playing.bin"))
+                localUrl = c.start()
+                cache = c
+            }
+        }
+        return Uri.parse(localUrl ?: remote)
+    }
 
     private fun openMedia(it: PlayItem, hw: Boolean) {
-        val media = Media(libVlc, Uri.parse(Plex.fixUrl(it.url)))
+        val media = Media(libVlc, sourceUri(it))
         media.setHWDecoderEnabled(hw, false)
         media.addOption(":http-user-agent=${Http.UA}")
         media.addOption(":http-reconnect")
@@ -161,6 +181,9 @@ class VlcPlayerActivity : AppCompatActivity() {
                 mp.stop()
                 openMedia(it, false)
                 mp.play()
+            } else if (cache?.done == false) {
+                // Aún descargando: es la conexión, no el archivo; se espera sin saltar nada
+                showLabel("Cargando…")
             } else {
                 // Trozo dañado del archivo: se salta un poco
                 showLabel("Saltando una parte dañada del archivo…")
@@ -385,6 +408,11 @@ class VlcPlayerActivity : AppCompatActivity() {
         "Reproductor alternativo (VLC)",
         item?.techNote,
         "${clock(mp.time)} / ${clock(mp.length)}",
+        cache?.let { c ->
+            if (c.total > 0) "Guardado en el aparato: ${c.downloaded * 100 / c.total}%  (${c.downloaded / 1_048_576} de ${c.total / 1_048_576} MB)"
+            else "Guardando en el aparato…"
+        },
+        Plex.lastRemuxNote?.takeIf { cache != null }?.let { "Plex: $it" },
         mp.audioTracks?.firstOrNull { it.id == mp.audioTrack }?.let { "Audio: ${it.name}" },
         mp.spuTracks?.firstOrNull { it.id == mp.spuTrack && it.id >= 0 }?.let { "Subtítulos: ${it.name}" },
     ).joinToString("\n")
@@ -429,6 +457,8 @@ class VlcPlayerActivity : AppCompatActivity() {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         handler.removeCallbacks(freezeWatch)
+        cache?.close()
+        cache = null
         if (::mp.isInitialized) {
             mp.stop()
             mp.detachViews()
