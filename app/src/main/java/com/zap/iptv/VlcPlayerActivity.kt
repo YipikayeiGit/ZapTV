@@ -74,8 +74,13 @@ class VlcPlayerActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.barTitle).text = it.title
 
         val options = arrayListOf(
-            "--network-caching=3000",
-            "--file-caching=3000",
+            "--network-caching=5000",
+            "--file-caching=5000",
+            // Si el servidor corta la conexión, VLC la vuelve a abrir en vez de quedarse parado
+            "--http-reconnect",
+            // Ante un fotograma dañado, saltarlo en lugar de congelar la imagen
+            "--avcodec-skip-frame=0",
+            "--avcodec-hurry-up",
             "--audio-time-stretch",
             "--sub-text-scale=${(SubStyle.get(this, SubStyle.SIZE).let { s -> listOf(80, 100, 125, 150)[s] })}",
         )
@@ -83,12 +88,11 @@ class VlcPlayerActivity : AppCompatActivity() {
         mp = MediaPlayer(libVlc)
         mp.attachViews(findViewById<VLCVideoLayout>(R.id.video), null, true, false)
 
-        val media = Media(libVlc, Uri.parse(Plex.fixUrl(it.url)))
-        media.setHWDecoderEnabled(true, false)
-        media.addOption(":http-user-agent=${Http.UA}")
-        mp.setMedia(media)
-        media.release()
-        for (s in it.subtitles) mp.addSlave(IMedia.Slave.Type.Subtitle, Uri.parse(s.url), false)
+        // Vídeos antiguos (DivX/XviD/MPEG-4 de AVI…): el chip del Firestick se atasca con ellos
+        // en ciertos fotogramas, siempre en el mismo sitio. Son de baja resolución, así que
+        // se decodifican por software, que va sobrado y no se para.
+        hardware = !OLD_CODECS.containsMatchIn(it.techNote.orEmpty().lowercase())
+        openMedia(it, hardware)
 
         mp.setEventListener { ev ->
             when (ev.type) {
@@ -113,6 +117,56 @@ class VlcPlayerActivity : AppCompatActivity() {
             }
         }
         mp.play()
+        handler.postDelayed(freezeWatch, 2_000)
+    }
+
+    private var hardware = true
+
+    private fun openMedia(it: PlayItem, hw: Boolean) {
+        val media = Media(libVlc, Uri.parse(Plex.fixUrl(it.url)))
+        media.setHWDecoderEnabled(hw, false)
+        media.addOption(":http-user-agent=${Http.UA}")
+        media.addOption(":http-reconnect")
+        mp.setMedia(media)
+        media.release()
+        for (s in it.subtitles) mp.addSlave(IMedia.Slave.Type.Subtitle, Uri.parse(s.url), false)
+    }
+
+    // ---------- Vídeo congelado: probar sin el chip de vídeo y, si sigue, saltar el trozo dañado ----------
+
+    private var lastTime = -1L
+    private var frozenSecs = 0
+
+    private val freezeWatch = object : Runnable {
+        override fun run() {
+            handler.postDelayed(this, 1_000)
+            if (!::mp.isInitialized || !started || !mp.isPlaying || loading.isVisible || seekOffset != 0L) {
+                frozenSecs = 0
+                lastTime = -1L
+                return
+            }
+            val t = mp.time
+            frozenSecs = if (t == lastTime) frozenSecs + 1 else 0
+            lastTime = t
+            if (frozenSecs < 4) return
+            frozenSecs = 0
+            val it = item ?: return
+            if (hardware) {
+                // Se reabre en el mismo punto decodificando por software
+                hardware = false
+                showLabel("Se ha atascado · reproduciendo en modo compatible…")
+                startAt = t + 500
+                started = false
+                tracksApplied = false
+                mp.stop()
+                openMedia(it, false)
+                mp.play()
+            } else {
+                // Trozo dañado del archivo: se salta un poco
+                showLabel("Saltando una parte dañada del archivo…")
+                mp.setTime(t + 3_000)
+            }
+        }
     }
 
     // ---------- Idiomas por defecto (por el nombre de la pista) ----------
@@ -374,6 +428,7 @@ class VlcPlayerActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        handler.removeCallbacks(freezeWatch)
         if (::mp.isInitialized) {
             mp.stop()
             mp.detachViews()
@@ -385,5 +440,6 @@ class VlcPlayerActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_START = "start"
+        private val OLD_CODECS = Regex("avi|mpeg4|msmpeg|divx|xvid|wmv|vc1|mpeg2|h263")
     }
 }
