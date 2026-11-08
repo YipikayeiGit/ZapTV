@@ -61,6 +61,15 @@ object Languages {
 
     private val FORCED = setOf("forced", "forzado", "forzados", "forzada", "forzadas", "force", "forces", "forcat", "forcats")
 
+    /** Código de idioma de una pista ("es", "en"…) o null si no se sabe. */
+    fun codeOf(f: Format): String? {
+        options.firstOrNull { matches(f, it.first) }?.let { return it.first }
+        return f.language?.lowercase()?.substringBefore('-')?.takeIf { it.isNotBlank() && it != "und" }
+    }
+
+    fun isForced(f: Format): Boolean =
+        f.selectionFlags and C.SELECTION_FLAG_FORCED != 0 || words(f.label).any { it in FORCED }
+
     /** Menor es mejor: castellano antes que latino, completos antes que forzados o para sordos. */
     fun penalty(f: Format): Int {
         val w = words(f.label) + words(f.language)

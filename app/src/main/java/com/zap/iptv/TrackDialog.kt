@@ -16,7 +16,8 @@ import java.util.Locale
 object TrackDialog {
     private val SPANISH = Locale("es")
 
-    fun show(activity: Activity, player: ExoPlayer, type: Int) {
+    /** [onPicked]: la pista elegida (null = subtítulos desactivados). */
+    fun show(activity: Activity, player: ExoPlayer, type: Int, onPicked: (Format?) -> Unit = {}) {
         val groups = player.currentTracks.groups.filter { it.type == type }
         val options = ArrayList<Pair<String, (() -> Unit)>>()
         var checked = -1
@@ -30,6 +31,7 @@ object TrackDialog {
                     .clearOverridesOfType(C.TRACK_TYPE_TEXT)
                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
                     .build()
+                onPicked(null)
             }
         }
 
@@ -42,6 +44,7 @@ object TrackDialog {
                     .setTrackTypeDisabled(type, false)
                     .setOverrideForType(TrackSelectionOverride(g.mediaTrackGroup, i))
                     .build()
+                onPicked(f)
             }
         }
 

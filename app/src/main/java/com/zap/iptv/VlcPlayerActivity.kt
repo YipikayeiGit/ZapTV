@@ -120,17 +120,21 @@ class VlcPlayerActivity : AppCompatActivity() {
     private fun applyLanguages() {
         if (tracksApplied) return
         tracksApplied = true
-        val audio = Languages.audioOrDevice(this)
+        val key = item?.resumeKey
+        val audio = SeriesTracks.audio(this, key)?.lang ?: Languages.audioOrDevice(this)
         mp.audioTracks?.filter { it.id >= 0 }
             ?.firstOrNull { matches(it.name, audio) }
             ?.let { mp.setAudioTrack(it.id) }
-        val subs = Languages.subs(this)
+        val saved = SeriesTracks.subs(this, key)
+        val subs = if (saved?.off == true) "" else saved?.lang ?: Languages.subs(this)
         val spu = mp.spuTracks?.filter { it.id >= 0 }.orEmpty()
         if (subs.isEmpty()) {
             mp.setSpuTrack(-1)
         } else {
+            fun forced(n: String?) = n.orEmpty().let { it.contains("forz", true) || it.contains("forced", true) }
+            val wantForced = saved?.forced == true
             spu.filter { matches(it.name, subs) }
-                .minByOrNull { if (it.name.contains("forz", true) || it.name.contains("forced", true)) 1 else 0 }
+                .minByOrNull { if (forced(it.name) == wantForced) 0 else 1 }
                 ?.let { mp.setSpuTrack(it.id) }
         }
     }
@@ -227,6 +231,10 @@ class VlcPlayerActivity : AppCompatActivity() {
             .setTitle(if (audio) "Audio" else "Subtítulos")
             .setSingleChoiceItems(names.toTypedArray(), tracks.indexOfFirst { it.id == current }) { d, which ->
                 if (audio) mp.setAudioTrack(tracks[which].id) else mp.setSpuTrack(tracks[which].id)
+                // En una serie se recuerda para el resto de capítulos
+                SeriesTracks.pickOfName(tracks[which].name, tracks[which].id)?.let {
+                    SeriesTracks.save(this, item?.resumeKey, audio, it)
+                }
                 d.dismiss()
             }
             .setNegativeButton("Cerrar", null)

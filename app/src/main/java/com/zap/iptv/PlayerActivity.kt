@@ -21,6 +21,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
@@ -103,6 +104,12 @@ class PlayerActivity : AppCompatActivity() {
             override fun onPlayerError(error: PlaybackException) = handleError(error)
 
             override fun onPlaybackStateChanged(state: Int) {
+                // Había que seguir por donde ibas pero el archivo no deja saltar: abrir en VLC ahí
+                if (!live && state == Player.STATE_READY && !resumeChecked) {
+                    resumeChecked = true
+                    val want = item?.let { savedPosition(it) } ?: 0L
+                    if (want > 0 && !player.isCurrentMediaItemSeekable && switchToVlc(want)) return
+                }
                 // Se ha parado mucho antes del final: casi siempre es un formato que el dispositivo no puede con él
                 if (!live && state == Player.STATE_ENDED) {
                     val dur = player.duration
@@ -146,10 +153,10 @@ class PlayerActivity : AppCompatActivity() {
         playerView.subtitleView?.let { SubStyle.apply(this, it) }
         // Audio y subtítulos: ventana grande y clara en lugar de los menús pequeños de abajo
         playerView.findViewById<View>(androidx.media3.ui.R.id.exo_subtitle)?.setOnClickListener {
-            TrackDialog.show(this, player, C.TRACK_TYPE_TEXT)
+            TrackDialog.show(this, player, C.TRACK_TYPE_TEXT) { f -> rememberTrack(false, f) }
         }
         playerView.findViewById<View>(androidx.media3.ui.R.id.exo_settings)?.setOnClickListener {
-            TrackDialog.show(this, player, C.TRACK_TYPE_AUDIO)
+            TrackDialog.show(this, player, C.TRACK_TYPE_AUDIO) { f -> rememberTrack(true, f) }
         }
         // El reproductor recibe las teclas del mando (OK, flechas, play/pausa)
         playerView.isFocusable = true
@@ -243,17 +250,18 @@ class PlayerActivity : AppCompatActivity() {
         val builder = player.trackSelectionParameters.buildUpon()
         var changed = false
 
-        fun choose(type: Int, code: String) {
+        fun choose(type: Int, code: String, wantForced: Boolean = false) {
+            fun score(f: Format) = Languages.penalty(f) - if (wantForced && Languages.isForced(f)) 8 else 0
             val groups = tracks.groups.filter { it.type == type }
             val candidates = groups.flatMap { g ->
                 (0 until g.length).filter { i -> g.isTrackSupported(i) && Languages.matches(g.getTrackFormat(i), code) }
                     .map { i -> g to i }
             }
-            val best = candidates.minByOrNull { (g, i) -> Languages.penalty(g.getTrackFormat(i)) } ?: return
-            val bestPenalty = Languages.penalty(best.first.getTrackFormat(best.second))
+            val best = candidates.minByOrNull { (g, i) -> score(g.getTrackFormat(i)) } ?: return
+            val bestPenalty = score(best.first.getTrackFormat(best.second))
             // Solo se deja la que eligió el reproductor si es igual de buena (p. ej. no forzada)
             val alreadyOk = candidates.any { (g, i) ->
-                g.isTrackSelected(i) && Languages.penalty(g.getTrackFormat(i)) == bestPenalty
+                g.isTrackSelected(i) && score(g.getTrackFormat(i)) == bestPenalty
             }
             if (alreadyOk) return
             builder.setTrackTypeDisabled(type, false)
@@ -261,10 +269,26 @@ class PlayerActivity : AppCompatActivity() {
             changed = true
         }
 
-        choose(C.TRACK_TYPE_AUDIO, Languages.audioOrDevice(this))
-        val subs = Languages.subs(this)
-        if (subs.isNotEmpty()) choose(C.TRACK_TYPE_TEXT, subs)
+        val key = item?.resumeKey
+        val seriesAudio = SeriesTracks.audio(this, key)
+        choose(C.TRACK_TYPE_AUDIO, seriesAudio?.lang ?: Languages.audioOrDevice(this))
+        val seriesSubs = SeriesTracks.subs(this, key)
+        when {
+            seriesSubs?.off == true -> if (!player.trackSelectionParameters.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)) {
+                builder.clearOverridesOfType(C.TRACK_TYPE_TEXT).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                changed = true
+            }
+            seriesSubs != null -> choose(C.TRACK_TYPE_TEXT, seriesSubs.lang, seriesSubs.forced)
+            else -> Languages.subs(this).takeIf { it.isNotEmpty() }?.let { choose(C.TRACK_TYPE_TEXT, it) }
+        }
         if (changed) player.trackSelectionParameters = builder.build()
+    }
+
+    /** En una serie, la pista elegida a mano se queda para el resto de capítulos. */
+    private fun rememberTrack(audio: Boolean, f: Format?) {
+        val key = item?.resumeKey ?: return
+        val pick = SeriesTracks.pickOf(f) ?: return
+        SeriesTracks.save(this, key, audio, pick)
     }
 
     private fun savedPosition(it: PlayItem): Long =
@@ -291,14 +315,15 @@ class PlayerActivity : AppCompatActivity() {
     // ---------- Plan B: reproductor VLC ----------
 
     private var switchedToVlc = false
+    private var resumeChecked = false
 
     /** ExoPlayer no puede con este archivo: se abre el mismo archivo original en VLC, por donde iba. */
-    private fun switchToVlc(): Boolean {
+    private fun switchToVlc(at: Long? = null): Boolean {
         val it = item ?: return false
         if (live || switchedToVlc || isFinishing) return false
         switchedToVlc = true
         val pos = if (::player.isInitialized) player.currentPosition else 0L
-        val start = if (pos > 5_000) pos else if (it.fromStart) 0L else savedPosition(it)
+        val start = at ?: if (pos > 5_000) pos else if (it.fromStart) 0L else savedPosition(it)
         Playback.item = it
         startActivity(Intent(this, VlcPlayerActivity::class.java).putExtra(VlcPlayerActivity.EXTRA_START, start))
         finish()
@@ -378,7 +403,13 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun commitSeek() {
         handler.removeCallbacks(seekCommit)
-        if (seekOffset != 0L) player.seekTo(seekTarget())
+        if (seekOffset != 0L) {
+            val target = seekTarget()
+            // Archivo sin índice para saltar (le pasa a algunos MKV): el reproductor normal
+            // volvería al principio; VLC sí sabe ir a ese punto
+            if (!player.isCurrentMediaItemSeekable && switchToVlc(target)) return
+            player.seekTo(target)
+        }
         seekOffset = 0L
         seekCount = 0
         seekDir = 0
