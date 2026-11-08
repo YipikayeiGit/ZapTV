@@ -33,6 +33,12 @@ class LocalCache(private val remote: String, private val file: File) {
     private var server: ServerSocket? = null
 
     val done get() = total > 0 && downloaded >= total
+    @Volatile private var note: String? = null
+
+    fun status(): String = note ?: when {
+        total <= 0 -> "guardando en el aparato…"
+        else -> "desde el aparato · guardado ${downloaded * 100 / total}% (${downloaded / 1_048_576} de ${total / 1_048_576} MB)"
+    }
 
     /** Arranca descarga y servidor; devuelve la dirección local para el reproductor. */
     fun start(): String {
@@ -82,6 +88,11 @@ class LocalCache(private val remote: String, private val file: File) {
                             ?: c.contentLengthLong.takeIf { it > 0 }?.plus(downloaded) ?: -1L
                     }
                     if (code == 200 && downloaded > 0) downloaded = 0 // el servidor no admite trozos
+                    if (total > 0 && file.parentFile!!.usableSpace < total - downloaded + 200L * 1024 * 1024) {
+                        note = "directa (el archivo ocupa ${total / 1_048_576} MB y no cabe en el aparato)"
+                        c.disconnect()
+                        break
+                    }
                     c.inputStream.use { inp ->
                         val buf = ByteArray(256 * 1024)
                         while (!closed) {
@@ -97,6 +108,7 @@ class LocalCache(private val remote: String, private val file: File) {
                     if (total < 0) total = downloaded
                 } catch (e: Exception) {
                     errors++
+                    if (errors >= 30) note = "directa (la descarga falla: ${e.message ?: e.javaClass.simpleName})"
                     if (!closed) Thread.sleep(2_000)
                 }
             }

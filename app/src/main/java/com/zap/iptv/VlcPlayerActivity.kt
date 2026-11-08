@@ -81,6 +81,8 @@ class VlcPlayerActivity : AppCompatActivity() {
             // Ante un fotograma dañado, saltarlo en lugar de congelar la imagen
             "--avcodec-skip-frame=0",
             "--avcodec-hurry-up",
+            // AVI con índice roto: VLC lo rehace en vez de quedarse parado en esos puntos
+            "--avi-index=3",
             "--audio-time-stretch",
             "--sub-text-scale=${(SubStyle.get(this, SubStyle.SIZE).let { s -> listOf(80, 100, 125, 150)[s] })}",
         )
@@ -123,6 +125,7 @@ class VlcPlayerActivity : AppCompatActivity() {
     private var hardware = true
     private var cache: LocalCache? = null
     private var localUrl: String? = null
+    private var cacheNote: String? = null
 
     /**
      * Archivos antiguos (AVI…): se descargan en segundo plano al aparato y se reproducen
@@ -131,12 +134,22 @@ class VlcPlayerActivity : AppCompatActivity() {
     private fun sourceUri(it: PlayItem): Uri {
         val remote = Plex.fixUrl(it.url) ?: it.url
         localUrl?.let { return Uri.parse(it) }
-        val old = OLD_CODECS.containsMatchIn(it.techNote.orEmpty().lowercase())
-        if (old && remote.startsWith("http") && ".m3u8" !in remote && cacheDir.usableSpace > 1200L * 1024 * 1024) {
-            runCatching {
+        // Siempre que se pueda: el archivo se baja al aparato mientras se ve
+        // (si no cabe, LocalCache lo detecta y lo sirve directo de internet)
+        val free = cacheDir.usableSpace / 1_048_576
+        cacheNote = when {
+            !remote.startsWith("http") -> "directa (no es un enlace web)"
+            ".m3u8" in remote -> "directa (emisión por partes)"
+            free < 400 -> "directa (solo quedan $free MB libres en el aparato)"
+            else -> null
+        }
+        if (cacheNote == null) {
+            try {
                 val c = LocalCache(remote, java.io.File(cacheDir, "playing.bin"))
                 localUrl = c.start()
                 cache = c
+            } catch (e: Exception) {
+                cacheNote = "directa (error: ${e.message ?: e.javaClass.simpleName})"
             }
         }
         return Uri.parse(localUrl ?: remote)
@@ -408,11 +421,9 @@ class VlcPlayerActivity : AppCompatActivity() {
         "Reproductor alternativo (VLC)",
         item?.techNote,
         "${clock(mp.time)} / ${clock(mp.length)}",
-        cache?.let { c ->
-            if (c.total > 0) "Guardado en el aparato: ${c.downloaded * 100 / c.total}%  (${c.downloaded / 1_048_576} de ${c.total / 1_048_576} MB)"
-            else "Guardando en el aparato…"
-        },
-        Plex.lastRemuxNote?.takeIf { cache != null }?.let { "Plex: $it" },
+        "Lectura: " + (cache?.status() ?: cacheNote ?: "directa"),
+        Plex.lastRemuxNote?.let { "Plex: $it" },
+        "Origen: " + (if (item?.plexServer != null) "Plex" else "IPTV") + " · decodificación " + (if (hardware) "por chip" else "por software"),
         mp.audioTracks?.firstOrNull { it.id == mp.audioTrack }?.let { "Audio: ${it.name}" },
         mp.spuTracks?.firstOrNull { it.id == mp.spuTrack && it.id >= 0 }?.let { "Subtítulos: ${it.name}" },
     ).joinToString("\n")
