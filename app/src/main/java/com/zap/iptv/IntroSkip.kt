@@ -47,7 +47,6 @@ class IntroSkip(
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END)
                 .apply { setMargins(0, 0, (48 * d).toInt(), (64 * d).toInt()) },
         )
-        handler.post(tick)
     }
 
     private val tick = object : Runnable {
@@ -83,4 +82,8 @@ class IntroSkip(
     }
 
     fun release() = handler.removeCallbacksAndMessages(null)
+
+    init {
+        handler.post(tick)
+    }
 }
