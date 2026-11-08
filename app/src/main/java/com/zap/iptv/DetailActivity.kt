@@ -20,6 +20,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -119,27 +120,56 @@ class DetailActivity : AppCompatActivity() {
         (buttons.firstOrNull() ?: sourcesBox.getChildAt(0))?.requestFocus()
 
         var infoShown = false
-        // Completar las etiquetas de Plex con idiomas y subtítulos, y la ficha
+        var plexTried = 0
+        val plexCount = sources.count { it.origin == Origin.PLEX }
+        // Completar las etiquetas de Plex con idiomas y subtítulos, y la ficha (con un reintento)
         sources.forEachIndexed { i, src ->
             if (src.origin != Origin.PLEX) return@forEachIndexed
             lifecycleScope.launch {
                 val d = withContext(Dispatchers.IO) {
-                    runCatching {
-                        Plex.ensure(src.plexServer!!)
-                        Plex.details(src.plexServer!!, src.plexKey!!)
-                    }.getOrNull()
-                } ?: return@launch
+                    var result: Plex.Details? = null
+                    for (attempt in 1..2) {
+                        result = runCatching {
+                            Plex.ensure(src.plexServer!!)
+                            Plex.details(src.plexServer!!, src.plexKey!!)
+                        }.getOrNull()
+                        if (result != null) break
+                        delay(1_500)
+                    }
+                    result
+                }
+                plexTried++
+                if (d == null) {
+                    // Plex no ha respondido: ficha del proveedor IPTV si la hay
+                    if (plexTried == plexCount && !infoShown) {
+                        infoShown = true
+                        showIptvInfo(m, sources)
+                    }
+                    return@launch
+                }
                 plexDetails[src.plexKey!!] = d
                 buttons[i].text = d.label
                 if (!infoShown) {
                     infoShown = true
                     showInfo(m, d.info)
+                    // Tráileres por separado
+                    val trailers = withContext(Dispatchers.IO) {
+                        runCatching { Plex.trailersFor(src.plexServer!!, src.plexKey!!) }.getOrDefault(emptyList())
+                    }
+                    if (trailers.isNotEmpty()) showTrailers(m, trailers)
                 }
             }
         }
 
         // Sin Plex: ficha del proveedor IPTV
-        if (sources.none { it.origin == Origin.PLEX }) {
+        if (plexCount == 0) {
+            infoShown = true
+            showIptvInfo(m, sources)
+        }
+    }
+
+    private fun showIptvInfo(m: Movie, sources: List<SourceRef>) {
+        run {
             val acc = Xtream.Account.parse(getSharedPreferences("zap", MODE_PRIVATE).getString("src", null))
             val id = sources.firstNotNullOfOrNull { it.url?.let { u -> Xtream.movieId(u) } }
             lifecycleScope.launch {
@@ -185,15 +215,8 @@ class DetailActivity : AppCompatActivity() {
             findViewById<View>(R.id.castTitle).isVisible = true
         }
 
-        // Tráileres
-        if (info.trailers.isNotEmpty()) {
-            val tv = findViewById<RecyclerView>(R.id.trailers)
-            tv.layoutManager = LinearLayoutManager(this, RecyclerView.HORIZONTAL, false)
-            tv.adapter = TrailerAdapter(info.trailers) { t -> playTrailer(m, t) }
-            tv.isFocusable = false
-            tv.isVisible = true
-            findViewById<View>(R.id.trailersTitle).isVisible = true
-        }
+        // Tráileres (los de IPTV vienen aquí; los de Plex llegan después, aparte)
+        if (info.trailers.isNotEmpty()) showTrailers(m, info.trailers)
 
         // Más como esta: las que sugiere Plex y, después, las de géneros parecidos
         lifecycleScope.launch {
@@ -232,6 +255,15 @@ class DetailActivity : AppCompatActivity() {
                 .forEach { out += it.first }
         }
         return out.toList()
+    }
+
+    private fun showTrailers(m: Movie, trailers: List<Trailer>) {
+        val tv = findViewById<RecyclerView>(R.id.trailers)
+        tv.layoutManager = LinearLayoutManager(this, RecyclerView.HORIZONTAL, false)
+        tv.adapter = TrailerAdapter(trailers) { t -> playTrailer(m, t) }
+        tv.isFocusable = false
+        tv.isVisible = true
+        findViewById<View>(R.id.trailersTitle).isVisible = true
     }
 
     private fun openPerson(p: Person) {
@@ -485,9 +517,13 @@ class DetailActivity : AppCompatActivity() {
                         Plex.ensure(src.plexServer!!) ?: throw IOException("el servidor de Plex no responde ahora")
                         val d = Plex.details(src.plexServer!!, src.plexKey!!)
                         problem = Codecs.problem(d.videoCodec, d.videoProfile, d.bitDepth)
+                        val tech = listOfNotNull(
+                            d.container?.uppercase(), d.videoCodec, d.videoProfile, "${d.bitDepth} bits",
+                        ).joinToString(" · ")
                         PlayItem(
                             title, d.url, d.subs, resumeKey = resumeKey, fromStart = fromStart,
                             plexServer = src.plexServer, plexKey = src.plexKey,
+                            techNote = "Archivo: $tech",
                         )
                     }
                 }

@@ -388,6 +388,8 @@ data class PlayItem(
     /** Si viene de Plex: para guardar el progreso también en tu cuenta de Plex. */
     val plexServer: String? = null,
     val plexKey: String? = null,
+    /** Formato del archivo según Plex, para el diagnóstico. */
+    val techNote: String? = null,
 )
 
 object Playback {

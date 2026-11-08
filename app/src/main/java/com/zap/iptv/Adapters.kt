@@ -84,6 +84,8 @@ class ChannelAdapter(
 /** Lista de opciones seleccionables (pastillas, temporadas o el panel de categorías). */
 class ChipAdapter(
     private val layout: Int = R.layout.item_group,
+    /** Pastillas que solo lanzan una acción (sin quedar marcadas). */
+    private val noSelection: Boolean = false,
     private val onPick: (Int) -> Unit,
 ) : RecyclerView.Adapter<ChipAdapter.VH>() {
 
@@ -94,7 +96,8 @@ class ChipAdapter(
     @SuppressLint("NotifyDataSetChanged")
     fun submit(list: List<String>, select: Int = 0) {
         labels = list
-        selected = select.coerceIn(0, (list.size - 1).coerceAtLeast(0))
+        // -1 = ninguna marcada (p. ej. búsquedas recientes)
+        selected = if (select < 0) -1 else select.coerceIn(0, (list.size - 1).coerceAtLeast(0))
         notifyDataSetChanged()
     }
 
@@ -106,11 +109,13 @@ class ChipAdapter(
         val vh = VH(tv)
         tv.setOnClickListener {
             val p = vh.bindingAdapterPosition
-            if (p == RecyclerView.NO_POSITION || p == selected) return@setOnClickListener
+            if (p == RecyclerView.NO_POSITION || (p == selected && selected >= 0)) return@setOnClickListener
             val old = selected
-            selected = p
-            notifyItemChanged(old)
-            notifyItemChanged(p)
+            if (!noSelection) {
+                selected = p
+                if (old >= 0) notifyItemChanged(old)
+                notifyItemChanged(p)
+            }
             onPick(p)
         }
         return vh

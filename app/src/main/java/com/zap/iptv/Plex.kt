@@ -582,6 +582,7 @@ object Plex {
         val subs: List<Sub>,
         val info: Info,
         /** Formato del vídeo: códec, perfil y bits de color (p. ej. h264 · High 10 · 10 bits). */
+        val container: String? = null,
         val videoCodec: String? = null,
         val videoProfile: String? = null,
         val bitDepth: Int = 8,
@@ -590,7 +591,8 @@ object Plex {
     /** Pide a Plex el archivo, idiomas y subtítulos de una peli o episodio. */
     fun details(serverId: String, key: String): Details {
         val s = servers[serverId] ?: throw IOException("servidor Plex no disponible")
-        val m = JSONObject(Http.get("${s.uri}/library/metadata/$key?includeExtras=1", headers(s.token)))
+        // Sin tráileres: así es rápida (los tráileres se piden aparte con trailersFor)
+        val m = JSONObject(Http.get("${s.uri}/library/metadata/$key", headers(s.token), timeout = 30_000))
             .getJSONObject("MediaContainer").getJSONArray("Metadata").getJSONObject(0)
         val media = m.optJSONArray("Media")?.optJSONObject(0) ?: throw IOException("sin vídeo")
         val part = media.optJSONArray("Part")?.optJSONObject(0) ?: throw IOException("sin vídeo")
@@ -640,7 +642,7 @@ object Plex {
 
         return Details(
             label, withToken("${s.uri}$partKey", s.token), subs, info(s, m),
-            vCodec?.lowercase(), vProfile, vBits,
+            media.str("container"), vCodec?.lowercase(), vProfile, vBits,
         )
     }
 
@@ -659,6 +661,14 @@ object Plex {
             val photo = r.str("thumb")?.let { if (it.startsWith("/")) withToken("${s.uri}$it", s.token) else it }
             Person(name, r.str("role"), photo, r.str("id"), kind, s.id, section)
         }
+    }
+
+    /** Tráileres de una película (petición aparte: la primera vez el servidor puede tardar en buscarlos). */
+    fun trailersFor(serverId: String, key: String): List<Trailer> {
+        val s = servers[serverId] ?: return emptyList()
+        val j = JSONObject(Http.get("${s.uri}/library/metadata/$key/extras", headers(s.token), timeout = 60_000))
+        val mc = j.optJSONObject("MediaContainer") ?: return emptyList()
+        return trailers(s, JSONObject().put("Extras", JSONObject().put("Metadata", mc.optJSONArray("Metadata") ?: JSONArray())))
     }
 
     /** Tráileres que tiene el servidor para esta película. */
@@ -836,6 +846,31 @@ object Plex {
             Titles.key(m.optString("title")) == want &&
                 (year == null || m.optInt("year") == 0 || kotlin.math.abs(m.optInt("year") - year) <= 1)
         } ?: found.firstOrNull { Titles.key(it.optString("title")) == want })?.str("guid")
+    }
+
+    /** Lo que es tendencia ahora en Plex (pelis y series), en el orden que da Plex. */
+    fun trending(): List<WatchItem> {
+        val tok = token ?: return emptyList()
+        val urls = listOf(
+            "https://discover.provider.plex.tv/hubs/sections/home?includeMeta=1&count=30",
+            "https://discover.provider.plex.tv/hubs/promoted?includeMeta=1&count=30",
+        )
+        for (url in urls) {
+            val found = ArrayList<JSONObject>()
+            runCatching {
+                val text = Http.get(url, headers(tok), timeout = 20_000).trimStart()
+                if (text.startsWith("{")) collectMetadata(JSONObject(text), "plex://", found)
+            }
+            val items = found
+                .filter { it.optString("type") == "movie" || it.optString("type") == "show" }
+                .distinctBy { it.optString("guid") }
+                .mapNotNull { m ->
+                    val title = m.str("title") ?: return@mapNotNull null
+                    WatchItem(m.str("guid"), title, m.optInt("year").takeIf { it > 0 }, m.optString("type"))
+                }
+            if (items.isNotEmpty()) return items.take(60)
+        }
+        return emptyList()
     }
 
     /** Recorre la respuesta (su formato varía) buscando fichas con guid plex://… */

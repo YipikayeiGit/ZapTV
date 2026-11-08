@@ -132,6 +132,9 @@ class MainActivity : AppCompatActivity() {
 
         tab = runCatching { Tab.valueOf(prefs.getString("tab", "HOME")!!) }.getOrDefault(Tab.HOME)
         for ((t, v) in tabs) v.setOnClickListener { selectTab(t) }
+        findViewById<View>(R.id.tabSearch).setOnClickListener {
+            startActivity(Intent(this, SearchActivity::class.java))
+        }
 
         findViewById<View>(R.id.settings).setOnClickListener { showSources() }
         findViewById<View>(R.id.reload).setOnClickListener { reloadAll() }

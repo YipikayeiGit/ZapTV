@@ -51,6 +51,13 @@
                     android:id="@+id/tabLive"
                     style="@style/Tab"
                     android:text="TV en directo" />
+
+                <TextView
+                    android:id="@+id/tabSearch"
+                    style="@style/Tab"
+                    android:drawableStart="@drawable/ic_search"
+                    android:drawablePadding="6dp"
+                    android:text="Buscar" />
             </LinearLayout>
         </HorizontalScrollView>
 
@@ -73,6 +80,7 @@
 
     <EditText
         android:id="@+id/search"
+        android:visibility="gone"
         android:layout_width="match_parent"
         android:layout_height="44dp"
         android:layout_marginStart="16dp"

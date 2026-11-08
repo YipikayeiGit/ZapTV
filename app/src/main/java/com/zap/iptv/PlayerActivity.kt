@@ -31,6 +31,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import kotlin.math.abs
@@ -118,6 +119,19 @@ class PlayerActivity : AppCompatActivity() {
             }
         })
         playerView.player = player
+        player.addAnalyticsListener(object : AnalyticsListener {
+            override fun onVideoDecoderInitialized(
+                eventTime: AnalyticsListener.EventTime, decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long,
+            ) {
+                videoDecoder = decoderName
+            }
+
+            override fun onAudioDecoderInitialized(
+                eventTime: AnalyticsListener.EventTime, decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long,
+            ) {
+                audioDecoder = decoderName
+            }
+        })
         // Al darle a play no se muestra la interfaz: solo con OK
         playerView.controllerAutoShow = false
         playerView.controllerShowTimeoutMs = 4_000
@@ -350,6 +364,12 @@ class PlayerActivity : AppCompatActivity() {
         return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%d:%02d".format(m, sec)
     }
 
+    // ---------- Diagnóstico ----------
+
+    private var videoDecoder: String? = null
+    private var audioDecoder: String? = null
+    private var techVisible = false
+
     /** Formato del vídeo y del audio, para saber por qué falla algo. */
     private fun techInfo(): String {
         val v = player.videoFormat
@@ -358,6 +378,78 @@ class PlayerActivity : AppCompatActivity() {
         val audio = a?.let { listOfNotNull(it.sampleMimeType, it.codecs, it.language).joinToString(" ") }
         return listOfNotNull(video?.let { "Vídeo: $it" }, audio?.let { "Audio: $it" }).joinToString(" · ")
             .ifEmpty { "Sin información del formato" }
+    }
+
+    /** Panel completo (↑): estado, formato, decodificadores y fotogramas. */
+    private fun techPanel(): String {
+        val state = when (player.playbackState) {
+            Player.STATE_BUFFERING -> "cargando"
+            Player.STATE_READY -> if (player.isPlaying) "reproduciendo" else "en pausa"
+            Player.STATE_ENDED -> "terminado"
+            else -> "parado"
+        }
+        val vc = player.videoDecoderCounters
+        val frames = vc?.let { "Fotogramas: ${it.renderedOutputBufferCount} mostrados · ${it.droppedBufferCount} perdidos" }
+        return listOfNotNull(
+            "Estado: $state · ${clock(player.currentPosition)} / ${clock(player.duration.coerceAtLeast(0))}" +
+                " · en memoria ${clock(player.bufferedPosition.coerceAtLeast(0))}",
+            item?.techNote,
+            techInfo(),
+            "Decodificadores: vídeo ${videoDecoder ?: "—"} · audio ${audioDecoder ?: "—"}",
+            frames,
+            "(↑ para ocultar)",
+        ).joinToString("\n")
+    }
+
+    private val techRefresher = object : Runnable {
+        override fun run() {
+            if (!techVisible) return
+            showLabel(techPanel(), sticky = true)
+            handler.postDelayed(this, 1_000)
+        }
+    }
+
+    private fun toggleTechPanel() {
+        techVisible = !techVisible
+        handler.removeCallbacks(techRefresher)
+        if (techVisible) techRefresher.run() else handler.post(hideLabel)
+    }
+
+    // Vigilante: detecta el vídeo atascado aunque el reproductor no dé error
+    private var lastPos = -1L
+    private var stuckChecks = 0
+    private var bufferingChecks = 0
+    private var stuckReported = false
+
+    private val watchdog = object : Runnable {
+        override fun run() {
+            if (!live && player.playWhenReady && !stuckReported) {
+                val pos = player.currentPosition
+                when (player.playbackState) {
+                    Player.STATE_READY -> {
+                        bufferingChecks = 0
+                        stuckChecks = if (pos == lastPos) stuckChecks + 1 else 0
+                        val frames = player.videoDecoderCounters?.renderedOutputBufferCount ?: 0
+                        if (stuckChecks >= 4) {
+                            stuckReported = true
+                            showLabel("El vídeo se ha atascado.\n${techPanel()}", sticky = true)
+                        } else if (pos > 6_000 && frames <= 2 && player.videoFormat != null) {
+                            stuckReported = true
+                            showLabel("Se oye pero no llega imagen: formato de vídeo no compatible.\n${techPanel()}", sticky = true)
+                        }
+                    }
+                    Player.STATE_BUFFERING -> {
+                        bufferingChecks++
+                        if (bufferingChecks >= 10) {
+                            stuckReported = true
+                            showLabel("Está tardando demasiado en cargar.\n${techPanel()}", sticky = true)
+                        }
+                    }
+                }
+                lastPos = pos
+            }
+            handler.postDelayed(this, 2_000)
+        }
     }
 
     private fun showLabel(text: String, sticky: Boolean = false) {
@@ -396,7 +488,11 @@ class PlayerActivity : AppCompatActivity() {
             when (code) {
                 KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { seekStep(+1); true }
                 KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> { seekStep(-1); true }
-                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> true
+                KeyEvent.KEYCODE_DPAD_UP -> {
+                    if (event.repeatCount == 0) toggleTechPanel()
+                    true
+                }
+                KeyEvent.KEYCODE_DPAD_DOWN -> true
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                     if (event.repeatCount == 0) {
                         commitSeek()
@@ -430,6 +526,10 @@ class PlayerActivity : AppCompatActivity() {
                 handler.removeCallbacks(plexReporter)
                 handler.postDelayed(plexReporter, 10_000)
             }
+            if (!live) {
+                handler.removeCallbacks(watchdog)
+                handler.postDelayed(watchdog, 4_000)
+            }
         }
     }
 
@@ -443,6 +543,7 @@ class PlayerActivity : AppCompatActivity() {
             player.pause()
         }
         handler.removeCallbacks(plexReporter)
+        handler.removeCallbacks(watchdog)
     }
 
     // ---------- Guardar el progreso en tu cuenta de Plex ----------
