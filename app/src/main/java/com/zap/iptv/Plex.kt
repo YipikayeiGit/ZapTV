@@ -623,6 +623,53 @@ object Plex {
         return Ratings(imdb, critics, fresh, audience, tmdb)
     }
 
+    /**
+     * Lo mismo que hace la app de Plex con los AVI antiguos: el servidor cambia solo el
+     * "envoltorio" del archivo (a HLS) copiando el vídeo tal cual, SIN recodificarlo.
+     * Solo se devuelve si Plex confirma que el vídeo va copiado (calidad original); si no, null.
+     */
+    fun remux(serverId: String, key: String): String? {
+        val s = servers[serverId] ?: return null
+        val session = java.util.UUID.randomUUID().toString()
+        val profile = "add-transcode-target(type=videoProfile&context=streaming&protocol=hls&container=mpegts" +
+            "&videoCodec=h264,hevc,mpeg4,msmpeg4v3,msmpeg4v2,msmpeg4,mpeg2video,mpeg1video,vc1,wmv3,h263" +
+            "&audioCodec=aac,ac3,eac3,mp3,mp2)"
+        val params = linkedMapOf(
+            "path" to "/library/metadata/$key",
+            "mediaIndex" to "0",
+            "partIndex" to "0",
+            "protocol" to "hls",
+            "fastSeek" to "1",
+            "directPlay" to "0",
+            "directStream" to "1",
+            "directStreamAudio" to "1",
+            "videoQuality" to "100",
+            "maxVideoBitrate" to "200000",
+            "videoResolution" to "3840x2160",
+            "subtitles" to "none",
+            "copyts" to "1",
+            "session" to session,
+            "X-Plex-Session-Identifier" to session,
+            "X-Plex-Client-Profile-Extra" to profile,
+            "X-Plex-Client-Identifier" to clientId,
+            "X-Plex-Product" to PRODUCT,
+            "X-Plex-Platform" to "Android",
+            "X-Plex-Device" to (Build.MODEL ?: "Android"),
+            "X-Plex-Token" to s.token,
+        )
+        val qs = params.entries.joinToString("&") { "${it.key}=${java.net.URLEncoder.encode(it.value, "UTF-8")}" }
+        val mc = JSONObject(Http.get("${s.uri}/video/:/transcode/universal/decision?$qs", headers(s.token), timeout = 20_000))
+            .getJSONObject("MediaContainer")
+        val streams = mc.optJSONArray("Metadata")?.optJSONObject(0)
+            ?.optJSONArray("Media")?.optJSONObject(0)
+            ?.optJSONArray("Part")?.optJSONObject(0)
+            ?.optJSONArray("Stream") ?: return null
+        val video = (0 until streams.length()).mapNotNull { streams.optJSONObject(it) }
+            .firstOrNull { it.optInt("streamType") == 1 } ?: return null
+        if (video.optString("decision") != "copy") return null
+        return "${s.uri}/video/:/transcode/universal/start.m3u8?$qs"
+    }
+
     fun details(serverId: String, key: String): Details {
         val s = servers[serverId] ?: throw IOException("servidor Plex no disponible")
         // Sin tráileres: así es rápida (los tráileres se piden aparte con trailersFor)

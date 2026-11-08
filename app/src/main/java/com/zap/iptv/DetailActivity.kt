@@ -528,11 +528,15 @@ class DetailActivity : AppCompatActivity() {
                         problem = Codecs.problem(d.videoCodec, d.videoProfile, d.bitDepth)
                         isAvi = d.container.equals("avi", true) ||
                             d.videoCodec?.lowercase() in setOf("mpeg4", "msmpeg4", "msmpeg4v3", "divx", "xvid", "wmv3", "vc1")
+                        // AVI antiguos: como la app de Plex, se pide al servidor que los "reempaquete"
+                        // copiando el vídeo sin tocarlo (misma calidad), que se reproduce sin parones
+                        val remux = if (isAvi) runCatching { Plex.remux(src.plexServer!!, src.plexKey!!) }.getOrNull() else null
                         val tech = listOfNotNull(
                             d.container?.uppercase(), d.videoCodec, d.videoProfile, "${d.bitDepth} bits",
+                            remux?.let { "reempaquetado por Plex (vídeo original)" },
                         ).joinToString(" · ")
                         PlayItem(
-                            title, d.url, d.subs, resumeKey = resumeKey, fromStart = fromStart,
+                            title, remux ?: d.url, d.subs, resumeKey = resumeKey, fromStart = fromStart,
                             plexServer = src.plexServer, plexKey = src.plexKey,
                             techNote = "Archivo: $tech",
                         )
