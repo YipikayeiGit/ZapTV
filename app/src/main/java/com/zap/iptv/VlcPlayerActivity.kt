@@ -129,7 +129,7 @@ class VlcPlayerActivity : AppCompatActivity() {
      * desde ahí, para que los saltos internos del archivo no dependan de internet.
      */
     private fun sourceUri(it: PlayItem): Uri {
-        val remote = Plex.fixUrl(it.url)
+        val remote = Plex.fixUrl(it.url) ?: it.url
         localUrl?.let { return Uri.parse(it) }
         val old = OLD_CODECS.containsMatchIn(it.techNote.orEmpty().lowercase())
         if (old && remote.startsWith("http") && ".m3u8" !in remote && cacheDir.usableSpace > 1200L * 1024 * 1024) {
