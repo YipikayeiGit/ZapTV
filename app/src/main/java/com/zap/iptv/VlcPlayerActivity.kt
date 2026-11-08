@@ -160,6 +160,9 @@ class VlcPlayerActivity : AppCompatActivity() {
         media.setHWDecoderEnabled(hw, false)
         media.addOption(":http-user-agent=${Http.UA}")
         media.addOption(":http-reconnect")
+        // AVI/DivX: se leen con el lector de FFmpeg (el mismo motor que usa la app de Plex),
+        // que aguanta mejor los archivos viejos con el índice o el intercalado mal hechos
+        if (OLD_CODECS.containsMatchIn(it.techNote.orEmpty().lowercase())) media.addOption(":demux=avformat,any")
         mp.setMedia(media)
         media.release()
         for (s in it.subtitles) mp.addSlave(IMedia.Slave.Type.Subtitle, Uri.parse(s.url), false)
@@ -423,7 +426,8 @@ class VlcPlayerActivity : AppCompatActivity() {
         "${clock(mp.time)} / ${clock(mp.length)}",
         "Lectura: " + (cache?.status() ?: cacheNote ?: "directa"),
         Plex.lastRemuxNote?.let { "Plex: $it" },
-        "Origen: " + (if (item?.plexServer != null) "Plex" else "IPTV") + " · decodificación " + (if (hardware) "por chip" else "por software"),
+        "Origen: " + (if (item?.plexServer != null) "Plex" else "IPTV") + " · decodificación " + (if (hardware) "por chip" else "por software") +
+            (if (OLD_CODECS.containsMatchIn(item?.techNote.orEmpty().lowercase())) " · lector FFmpeg" else ""),
         mp.audioTracks?.firstOrNull { it.id == mp.audioTrack }?.let { "Audio: ${it.name}" },
         mp.spuTracks?.firstOrNull { it.id == mp.spuTrack && it.id >= 0 }?.let { "Subtítulos: ${it.name}" },
     ).joinToString("\n")
