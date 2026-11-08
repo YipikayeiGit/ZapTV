@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
@@ -59,13 +60,16 @@ class SearchActivity : AppCompatActivity() {
                 search(it?.toString()?.trim().orEmpty())
             }
         }
-        input.setOnEditorActionListener { _, action, _ ->
-            if (action == EditorInfo.IME_ACTION_SEARCH || action == EditorInfo.IME_ACTION_DONE) {
-                remember(input.text.toString())
-                true
-            } else {
-                false
+        // Cualquier botón de acción del teclado (Buscar, Siguiente, Hecho…) lo cierra y baja a los resultados
+        input.setOnEditorActionListener { _, _, _ ->
+            remember(input.text.toString())
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.hideSoftInputFromWindow(input.windowToken, 0)
+            input.clearFocus()
+            results.post {
+                (results.getChildAt(0) ?: results).requestFocus()
             }
+            true
         }
 
         // Atrás: primero borra lo escrito; luego vuelve

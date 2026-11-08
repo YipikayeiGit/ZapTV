@@ -105,6 +105,11 @@ class PlayerActivity : AppCompatActivity() {
                 // Se ha parado mucho antes del final: casi siempre es un formato que el dispositivo no puede con él
                 if (!live && state == Player.STATE_ENDED) {
                     val dur = player.duration
+                    // Termina sin haber durado nada (p. ej. AVI que ExoPlayer no entiende)
+                    if ((dur == C.TIME_UNSET || dur <= 0 || player.videoFormat == null) &&
+                        player.currentPosition < 60_000 && switchToVlc()
+                    ) return
+                    if (dur != C.TIME_UNSET && dur > 60_000 && player.currentPosition < dur - 60_000 && switchToVlc()) return
                     if (dur != C.TIME_UNSET && dur > 60_000 && player.currentPosition < dur - 60_000) {
                         showLabel("La reproducción se ha detenido antes de tiempo.\n${techInfo()}", sticky = true)
                     }
@@ -282,6 +287,23 @@ class PlayerActivity : AppCompatActivity() {
         getSharedPreferences("resume_t", MODE_PRIVATE).edit().putLong(key, System.currentTimeMillis()).apply()
     }
 
+    // ---------- Plan B: reproductor VLC ----------
+
+    private var switchedToVlc = false
+
+    /** ExoPlayer no puede con este archivo: se abre el mismo archivo original en VLC, por donde iba. */
+    private fun switchToVlc(): Boolean {
+        val it = item ?: return false
+        if (live || switchedToVlc || isFinishing) return false
+        switchedToVlc = true
+        val pos = if (::player.isInitialized) player.currentPosition else 0L
+        val start = if (pos > 5_000) pos else if (it.fromStart) 0L else savedPosition(it)
+        Playback.item = it
+        startActivity(Intent(this, VlcPlayerActivity::class.java).putExtra(VlcPlayerActivity.EXTRA_START, start))
+        finish()
+        return true
+    }
+
     // ---------- Errores ----------
 
     private fun handleError(error: PlaybackException) {
@@ -296,7 +318,12 @@ class PlayerActivity : AppCompatActivity() {
             else showLabel("No se puede reproducir · ${channels[index].name}", sticky = true)
             return
         }
-        // Sin plan B de conversión: se reproduce siempre el archivo original
+        // Sin conversión: si ExoPlayer no puede, el mismo archivo original se abre en VLC
+        if (error.errorCode != PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS &&
+            error.errorCode != PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED &&
+            error.errorCode != PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT &&
+            switchToVlc()
+        ) return
         val reason = when (error.errorCode) {
             PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
             PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
@@ -432,9 +459,11 @@ class PlayerActivity : AppCompatActivity() {
                         val frames = player.videoDecoderCounters?.renderedOutputBufferCount ?: 0
                         if (stuckChecks >= 4) {
                             stuckReported = true
+                            if (switchToVlc()) return
                             showLabel("El vídeo se ha atascado.\n${techPanel()}", sticky = true)
                         } else if (pos > 6_000 && frames <= 2 && player.videoFormat != null) {
                             stuckReported = true
+                            if (switchToVlc()) return
                             showLabel("Se oye pero no llega imagen: formato de vídeo no compatible.\n${techPanel()}", sticky = true)
                         }
                     }
@@ -536,7 +565,7 @@ class PlayerActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         if (::player.isInitialized) {
-            if (!live) {
+            if (!live && !switchedToVlc) {
                 savePosition()
                 reportPlex(stopped = true)
             }

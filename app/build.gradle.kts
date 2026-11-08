@@ -14,7 +14,7 @@ android {
         // Número de compilación de GitHub: así la app sabe si hay una versión más nueva
         val build = System.getenv("BUILD_NUMBER")?.toIntOrNull() ?: 1
         versionCode = build
-        versionName = "3.3 ($build)"
+        versionName = "3.4 ($build)"
         // Solo los procesadores de Fire TV y móviles: APK más pequeña
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
     }
@@ -70,5 +70,7 @@ dependencies {
     // Decodificador FFmpeg (DTS, TrueHD, etc.) para reproducir el original sin transcodificar
     implementation("org.jellyfin.media3:media3-ffmpeg-decoder:$media3+1")
     implementation("io.coil-kt:coil:2.7.0")
+    // Plan B para formatos que ExoPlayer no abre (AVI/DivX/XviD, 10 bits…)
+    implementation("org.videolan.android:libvlc-all:3.6.0")
     implementation("com.google.zxing:core:3.5.3")
 }

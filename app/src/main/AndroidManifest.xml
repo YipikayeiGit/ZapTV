@@ -78,6 +78,12 @@
             android:exported="false"
             android:screenOrientation="sensorLandscape"
             android:theme="@style/Theme.Zap.Player" />
+        <activity
+            android:name=".VlcPlayerActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|navigation"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:theme="@style/Theme.Zap.Player" />
 
         <!-- Para entregar la APK descargada al instalador -->
         <provider

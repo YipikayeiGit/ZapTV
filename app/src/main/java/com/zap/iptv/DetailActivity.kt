@@ -508,6 +508,7 @@ class DetailActivity : AppCompatActivity() {
         val loading = MaterialAlertDialogBuilder(this).setView(view).setCancelable(false).show()
         lifecycleScope.launch {
             var problem: String? = null
+            var isAvi = false
             val playItem = try {
                 withContext(Dispatchers.IO) {
                     if (src.origin == Origin.IPTV) {
@@ -517,6 +518,8 @@ class DetailActivity : AppCompatActivity() {
                         Plex.ensure(src.plexServer!!) ?: throw IOException("el servidor de Plex no responde ahora")
                         val d = Plex.details(src.plexServer!!, src.plexKey!!)
                         problem = Codecs.problem(d.videoCodec, d.videoProfile, d.bitDepth)
+                        isAvi = d.container.equals("avi", true) ||
+                            d.videoCodec?.lowercase() in setOf("mpeg4", "msmpeg4", "msmpeg4v3", "divx", "xvid", "wmv3", "vc1")
                         val tech = listOfNotNull(
                             d.container?.uppercase(), d.videoCodec, d.videoProfile, "${d.bitDepth} bits",
                         ).joinToString(" · ")
@@ -542,34 +545,19 @@ class DetailActivity : AppCompatActivity() {
                 return@launch
             }
             loading.dismiss()
-            val why = problem
-            if (why == null) {
-                launchPlayer(playItem)
-                return@launch
-            }
-            // Formato que este dispositivo no sabe reproducir: avisar antes
-            starting = false
-            val iptv = others.firstOrNull { it.origin == Origin.IPTV }
-            val options = buildList {
-                if (iptv != null) add("▶  Ver desde IPTV")
-                add("Intentar igualmente")
-                add("Cancelar")
-            }
-            MaterialAlertDialogBuilder(this@DetailActivity)
-                .setTitle("Formato no compatible")
-                .setMessage(why)
-                .setItems(options.toTypedArray()) { _, which ->
-                    when (options[which]) {
-                        "▶  Ver desde IPTV" -> startPlayback(title, iptv!!, resumeKey, fromStart)
-                        "Intentar igualmente" -> launchPlayer(playItem)
-                    }
-                }
-                .show()
+            // Formatos con los que el reproductor normal no puede (AVI antiguos, 10 bits…): directamente VLC,
+            // que reproduce el archivo original tal cual
+            launchPlayer(playItem, vlc = problem != null || isAvi)
         }
     }
 
-    private fun launchPlayer(playItem: PlayItem) {
+    private fun launchPlayer(playItem: PlayItem, vlc: Boolean = false) {
+        starting = false
         Playback.item = playItem
+        if (vlc) {
+            startActivity(Intent(this, VlcPlayerActivity::class.java))
+            return
+        }
         startActivity(
             Intent(this, PlayerActivity::class.java).putExtra(PlayerActivity.EXTRA_MODE, PlayerActivity.MODE_VOD)
         )
