@@ -56,6 +56,12 @@ class MainActivity : AppCompatActivity() {
     private var vodFilters: List<VodFilter> = listOf(VodFilter.Home)
     private var vodFilter: VodFilter = VodFilter.Home
     private var query = ""
+    private lateinit var backdrop: Backdrop
+    private lateinit var hero: View
+    private lateinit var heroTitle: TextView
+    private lateinit var heroMeta: TextView
+    private lateinit var heroPlot: TextView
+    private var heroOn = false
     private var typingJob: Job? = null
     private var filterJob: Job? = null
     private var busy = 0
@@ -96,6 +102,16 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         Plex.init(this)
         setContentView(R.layout.activity_main)
+        backdrop = Backdrop(this)
+        hero = findViewById(R.id.hero)
+        heroTitle = findViewById(R.id.heroTitle)
+        heroMeta = findViewById(R.id.heroMeta)
+        heroPlot = findViewById(R.id.heroPlot)
+        resources.displayMetrics.let { dm ->
+            heroOn = dm.widthPixels / dm.density > 600
+            // Altura fija: así las filas no saltan al cambiar de título
+            hero.layoutParams = hero.layoutParams.apply { height = (dm.heightPixels * 0.30f).toInt() }
+        }
 
         tabs = mapOf(
             Tab.HOME to findViewById(R.id.tabHome),
@@ -250,6 +266,7 @@ class MainActivity : AppCompatActivity() {
         tab = t
         prefs.edit { putString("tab", t.name) }
         for ((k, v) in tabs) v.isSelected = k == t
+        updateHero()
         renderChips()
         refresh(scrollTop = true)
     }
@@ -263,6 +280,30 @@ class MainActivity : AppCompatActivity() {
             else -> LinearLayoutManager(this)
         }
         content.adapter = a
+        updateHero()
+    }
+
+    // ---------- Fondo y cabecera del título enfocado (estilo Plex) ----------
+
+    private fun showHero(item: CatalogItem) {
+        if (tab == Tab.LIVE) return
+        backdrop.show(item.art ?: item.poster)
+        heroTitle.text = item.title
+        heroMeta.text = listOfNotNull(
+            if (item is Show) "Serie" else "Película",
+            item.year?.toString(),
+            item.rating?.let { "★ %.1f".format(it) },
+            item.genres.take(2).joinToString(", ").ifEmpty { null },
+            item.quality,
+        ).joinToString("  ·  ")
+        heroPlot.text = item.plot.orEmpty()
+        updateHero()
+    }
+
+    private fun updateHero() {
+        if (!::hero.isInitialized) return
+        if (tab == Tab.LIVE) backdrop.hide()
+        hero.isVisible = heroOn && tab != Tab.LIVE && content.adapter === rowsAdapter && heroTitle.text.isNotEmpty()
     }
 
     private fun renderChips() {
@@ -442,11 +483,17 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        PosterAdapter.onFocus = { showHero(it) }
         // Al volver del reproductor, actualizar "Seguir viendo"
         // y "Mi lista" por si has añadido o quitado algo desde una ficha
         if (query.isEmpty() && (content.adapter === rowsAdapter || tab == Tab.WATCH)) {
             refresh()
         }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        PosterAdapter.onFocus = null
     }
 
     private fun updateEmpty() {

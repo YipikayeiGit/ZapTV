@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <TextView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
+    android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:layout_marginBottom="8dp"
     android:background="@drawable/bg_source"
@@ -10,7 +10,9 @@
     android:focusable="true"
     android:gravity="center_vertical"
     android:minHeight="48dp"
-    android:paddingStart="14dp"
-    android:paddingEnd="14dp"
-    android:textColor="@color/text"
-    android:textSize="15sp" />
+    android:paddingStart="18dp"
+    android:paddingEnd="22dp"
+    android:drawableTint="@drawable/source_text"
+    android:textColor="@drawable/source_text"
+    android:textSize="15sp"
+    android:textStyle="bold" />

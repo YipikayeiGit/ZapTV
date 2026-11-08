@@ -2,7 +2,6 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="@drawable/bg_poster"
     android:clickable="true"
     android:focusable="true"
     android:orientation="vertical"
@@ -12,7 +11,9 @@
         android:id="@+id/box"
         android:layout_width="match_parent"
         android:layout_height="180dp"
-        android:background="@drawable/bg_logo">
+        android:background="@drawable/bg_logo"
+        android:duplicateParentState="true"
+        android:foreground="@drawable/fg_poster">
 
         <TextView
             android:id="@+id/ph"
@@ -86,8 +87,9 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
         android:ellipsize="end"
+        android:duplicateParentState="true"
         android:maxLines="1"
-        android:textColor="@color/text"
+        android:textColor="@drawable/poster_title"
         android:textSize="13sp" />
 
     <TextView

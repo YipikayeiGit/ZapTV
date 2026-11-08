@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
+import org.videolan.libvlc.interfaces.IMedia
 import org.videolan.libvlc.util.VLCVideoLayout
 import kotlin.math.abs
 
@@ -87,7 +88,7 @@ class VlcPlayerActivity : AppCompatActivity() {
         media.addOption(":http-user-agent=${Http.UA}")
         mp.setMedia(media)
         media.release()
-        for (s in it.subtitles) mp.addSlave(Media.Slave.Type.Subtitle, Uri.parse(s.url), false)
+        for (s in it.subtitles) mp.addSlave(IMedia.Slave.Type.Subtitle, Uri.parse(s.url), false)
 
         mp.setEventListener { ev ->
             when (ev.type) {

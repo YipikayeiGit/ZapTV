@@ -167,7 +167,20 @@ class PosterAdapter(
                 val p = bindingAdapterPosition
                 if (p != RecyclerView.NO_POSITION) onClick(items[p])
             }
+            // Como en Plex: la carátula enfocada crece un poco y el fondo de la pantalla cambia
+            v.setOnFocusChangeListener { view, focused ->
+                val s = if (focused) 1.07f else 1f
+                view.animate().scaleX(s).scaleY(s).setDuration(140).start()
+                view.translationZ = if (focused) 4f else 0f
+                val p = bindingAdapterPosition
+                if (focused && p != RecyclerView.NO_POSITION) onFocus?.invoke(items[p])
+            }
         }
+    }
+
+    companion object {
+        /** Avisa de qué título tiene el foco (la pantalla principal lo usa para el fondo y la cabecera). */
+        var onFocus: ((CatalogItem) -> Unit)? = null
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
@@ -190,6 +203,11 @@ class PosterAdapter(
 
     override fun onBindViewHolder(h: VH, position: Int) {
         val it = items[position]
+        if (!h.itemView.isFocused) {
+            h.itemView.scaleX = 1f
+            h.itemView.scaleY = 1f
+            h.itemView.translationZ = 0f
+        }
         h.title.text = it.title
         h.year.text = it.year?.toString() ?: ""
         val fresh = it is Show && Catalog.newEpisodes.any { n -> n.key == it.key }

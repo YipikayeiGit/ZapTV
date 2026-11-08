@@ -70,6 +70,7 @@ dependencies {
     // Decodificador FFmpeg (DTS, TrueHD, etc.) para reproducir el original sin transcodificar
     implementation("org.jellyfin.media3:media3-ffmpeg-decoder:$media3+1")
     implementation("io.coil-kt:coil:2.7.0")
+    implementation("androidx.palette:palette-ktx:1.0.0")
     // Plan B para formatos que ExoPlayer no abre (AVI/DivX/XviD, 10 bits…)
     implementation("org.videolan.android:libvlc-all:3.6.0")
     implementation("com.google.zxing:core:3.5.3")

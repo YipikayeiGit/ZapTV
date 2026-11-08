@@ -67,6 +67,8 @@ class DetailActivity : AppCompatActivity() {
         }
         item = sel
         setContentView(if (sel is Movie) R.layout.activity_movie else R.layout.activity_detail)
+        // Fondo con la imagen del título, como en Plex
+        Backdrop(this).show(sel.art ?: sel.poster, 0)
 
         sourcesBox = findViewById(R.id.sources)
         findViewById<TextView>(R.id.title).text = item.title
