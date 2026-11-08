@@ -112,7 +112,9 @@ class MainActivity : AppCompatActivity() {
         resources.displayMetrics.let { dm ->
             heroOn = dm.widthPixels / dm.density > 600
             // Altura fija: así las filas no saltan al cambiar de título
-            hero.layoutParams = hero.layoutParams.apply { height = (dm.heightPixels * 0.30f).toInt() }
+            hero.layoutParams = hero.layoutParams.apply { height = (dm.heightPixels * 0.25f).toInt() }
+            // El texto ocupa la parte izquierda; a la derecha queda la imagen
+            if (heroOn) hero.setPaddingRelative(hero.paddingStart, hero.paddingTop, (dm.widthPixels * 0.45f).toInt(), hero.paddingBottom)
         }
 
         tabs = mapOf(
@@ -291,15 +293,55 @@ class MainActivity : AppCompatActivity() {
         if (tab == Tab.LIVE) return
         backdrop.show(item.art ?: item.poster)
         heroTitle.text = item.title
-        heroMeta.text = listOfNotNull(
+        heroPlot.text = item.plot.orEmpty()
+        heroItem = item
+        loadRatings(item)
+        updateHero()
+    }
+
+    // Notas de IMDb y Rotten Tomatoes (de Plex), se piden al enfocar y se guardan en memoria
+    private var heroItem: CatalogItem? = null
+    private var ratingsJob: Job? = null
+    private val ratingsCache = object : LinkedHashMap<String, Plex.Ratings>(200, 0.75f, true) {
+        override fun removeEldestEntry(e: MutableMap.MutableEntry<String, Plex.Ratings>?) = size > 300
+    }
+
+    private fun plexRef(item: CatalogItem): Pair<String, String>? = when (item) {
+        is Movie -> item.sources.firstOrNull { it.plexServer != null && it.plexKey != null }?.let { it.plexServer!! to it.plexKey!! }
+        is Show -> item.plex.firstOrNull()?.let { it.server to it.key }
+        else -> null
+    }
+
+    private fun heroMetaText(item: CatalogItem, r: Plex.Ratings?): String {
+        val notes = ArrayList<String>()
+        if (r != null && !r.empty) {
+            r.imdb?.let { notes += "IMDb %.1f".format(it) }
+            r.critics?.let { notes += (if (r.fresh) "🍅 " else "🥀 ") + "$it%" }
+            r.audience?.let { notes += "🍿 $it%" }
+            if (notes.isEmpty()) r.tmdb?.let { notes += "TMDB %.1f".format(it) }
+        } else {
+            item.rating?.let { notes += "★ %.1f".format(it) }
+        }
+        return (listOfNotNull(
             if (item is Show) "Serie" else "Película",
             item.year?.toString(),
-            item.rating?.let { "★ %.1f".format(it) },
             item.genres.take(2).joinToString(", ").ifEmpty { null },
             item.quality,
-        ).joinToString("  ·  ")
-        heroPlot.text = item.plot.orEmpty()
-        updateHero()
+        ) + notes).joinToString("  ·  ")
+    }
+
+    private fun loadRatings(item: CatalogItem) {
+        ratingsJob?.cancel()
+        val ref = plexRef(item)
+        val cached = ref?.let { ratingsCache["${it.first}/${it.second}"] }
+        heroMeta.text = heroMetaText(item, cached)
+        if (ref == null || cached != null) return
+        ratingsJob = lifecycleScope.launch {
+            delay(450) // solo si te paras en el título
+            val r = withContext(Dispatchers.IO) { runCatching { Plex.ratings(ref.first, ref.second) }.getOrNull() } ?: return@launch
+            ratingsCache["${ref.first}/${ref.second}"] = r
+            if (heroItem === item) heroMeta.text = heroMetaText(item, r)
+        }
     }
 
     private fun updateHero() {

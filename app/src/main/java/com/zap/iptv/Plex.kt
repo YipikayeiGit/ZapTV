@@ -589,6 +589,40 @@ object Plex {
     )
 
     /** Pide a Plex el archivo, idiomas y subtítulos de una peli o episodio. */
+    /** Notas de IMDb y Rotten Tomatoes (críticos y público) según el servidor Plex. */
+    data class Ratings(val imdb: Float? = null, val critics: Int? = null, val fresh: Boolean = true, val audience: Int? = null, val tmdb: Float? = null) {
+        val empty get() = imdb == null && critics == null && audience == null && tmdb == null
+    }
+
+    fun ratings(serverId: String, key: String): Ratings {
+        val s = servers[serverId] ?: throw IOException("servidor Plex no disponible")
+        val m = JSONObject(Http.get("${s.uri}/library/metadata/$key", headers(s.token), timeout = 8_000))
+            .getJSONObject("MediaContainer").getJSONArray("Metadata").getJSONObject(0)
+        var imdb: Float? = null
+        var critics: Int? = null
+        var fresh = true
+        var audience: Int? = null
+        var tmdb: Float? = null
+        fun put(image: String?, value: Double) {
+            if (image == null || value.isNaN() || value <= 0) return
+            when {
+                image.startsWith("imdb://") -> imdb = imdb ?: value.toFloat()
+                image.startsWith("themoviedb://") -> tmdb = tmdb ?: value.toFloat()
+                image.startsWith("rottentomatoes://image.rating.ripe") || image.startsWith("rottentomatoes://image.rating.rotten") -> {
+                    critics = critics ?: (value * 10).toInt()
+                    fresh = "rotten" !in image
+                }
+                image.startsWith("rottentomatoes://image.rating.") -> audience = audience ?: (value * 10).toInt()
+            }
+        }
+        m.optJSONArray("Rating")?.let { a ->
+            for (i in 0 until a.length()) a.optJSONObject(i)?.let { r -> put(r.str("image"), r.optDouble("value")) }
+        }
+        put(m.str("ratingImage"), m.optDouble("rating"))
+        put(m.str("audienceRatingImage"), m.optDouble("audienceRating"))
+        return Ratings(imdb, critics, fresh, audience, tmdb)
+    }
+
     fun details(serverId: String, key: String): Details {
         val s = servers[serverId] ?: throw IOException("servidor Plex no disponible")
         // Sin tráileres: así es rápida (los tráileres se piden aparte con trailersFor)
