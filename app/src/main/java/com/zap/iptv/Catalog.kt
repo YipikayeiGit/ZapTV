@@ -655,6 +655,7 @@ object Home {
         genres: List<String>,
         watch: List<CatalogItem> = emptyList(),
         newEpisodes: List<CatalogItem> = emptyList(),
+        trending: List<CatalogItem> = emptyList(),
     ): List<Row> {
         val out = ArrayList<Row>()
         // Las series con capítulo nuevo ya vienen colocadas en "resume" por la fecha del aviso
@@ -665,17 +666,17 @@ object Home {
         val recent = items.filter { it.added > 0 }.sortedByDescending { it.added }.take(40)
         if (recent.isNotEmpty()) out += Row("Novedades", recent)
 
-        val both = items.any { Origin.PLEX in it.origins } && items.any { Origin.IPTV in it.origins }
-        if (both) {
-            val plex = items.filter { Origin.PLEX in it.origins }.sortedByDescending { it.added }.take(40)
-            if (plex.isNotEmpty()) out += Row("Novedades en Plex", plex)
-        }
 
         val year = Calendar.getInstance().get(Calendar.YEAR)
         val fresh = items.filter { (it.year ?: 0) >= year - 1 }
             .sortedWith(compareByDescending<CatalogItem> { it.year ?: 0 }.thenByDescending { it.added })
             .take(40)
         if (fresh.size >= 5) out += Row("Estrenos", fresh)
+
+        // Tendencias: lo más visto ahora mismo en Plex (de todo el mundo) que tienes en tus fuentes
+        val inHere = items.toHashSet()
+        val trend = trending.filter { it in inHere }.take(40)
+        if (trend.size >= 5) out += Row("Tendencias", trend)
 
         // Animación, antes que las plataformas y el resto de categorías
         val animation = genres.filter { isAnimation(it) }

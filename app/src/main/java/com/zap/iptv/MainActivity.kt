@@ -451,7 +451,7 @@ class MainActivity : AppCompatActivity() {
                 val newEps = Catalog.newEpisodes
                 val rows = withContext(Dispatchers.Default) {
                     val genres = (Catalog.movieGenres + Catalog.showGenres).distinctBy { Titles.genreKey(it) }
-                    Home.rows(Catalog.movies + Catalog.shows, resume, genres, emptyList(), newEps)
+                    Home.rows(Catalog.movies + Catalog.shows, resume, genres, emptyList(), newEps, trendingItems())
                 }
                 useAdapter(rowsAdapter)
                 rowsAdapter.showKind = true
@@ -463,7 +463,7 @@ class MainActivity : AppCompatActivity() {
                     val genres = if (shows) Catalog.showGenres else Catalog.movieGenres
                     val resume = resumeItems(t)
                     val newEps = if (shows) Catalog.newEpisodes else emptyList()
-                    val rows = withContext(Dispatchers.Default) { Home.rows(src, resume, genres, emptyList(), newEps) }
+                    val rows = withContext(Dispatchers.Default) { Home.rows(src, resume, genres, emptyList(), newEps, trendingItems()) }
                     useAdapter(rowsAdapter)
                     rowsAdapter.showKind = false
                     rowsAdapter.submit(rows)
@@ -557,6 +557,60 @@ class MainActivity : AppCompatActivity() {
             renderChips()
             refresh()
             checkNewEpisodes()
+            loadTrending()
+        }
+    }
+
+    // ---------- Tendencias (lo más visto ahora en Plex) ----------
+
+    @Volatile private var trendRaw: List<WatchItem> = emptyList()
+    @Volatile private var trendCache: Pair<List<Any>, List<CatalogItem>>? = null
+    private var trendJob: Job? = null
+    private val trendFile by lazy { java.io.File(filesDir, "trending.txt") }
+
+    /** Las tendencias que están en tu catálogo (se recalcula solo si cambia algo). */
+    private fun trendingItems(): List<CatalogItem> {
+        val raw = trendRaw
+        if (raw.isEmpty()) return emptyList()
+        val movies = Catalog.movies
+        val shows = Catalog.shows
+        val stamp = listOf<Any>(raw, movies, shows)
+        trendCache?.let { (k, v) -> if (k.size == 3 && k.indices.all { k[it] === stamp[it] }) return v }
+        val mIdx = Watch.Index(movies)
+        val sIdx = Watch.Index(shows)
+        val list = raw.mapNotNull { w -> if (w.type == "show") sIdx.find(w) else mIdx.find(w) }.distinct()
+        trendCache = stamp to list
+        return list
+    }
+
+    /** Lee las tendencias guardadas y, como mucho cada 6 horas, las pide de nuevo a Plex. */
+    private fun loadTrending() {
+        if (trendRaw.isEmpty()) {
+            trendRaw = runCatching {
+                trendFile.readLines().mapNotNull { l ->
+                    val p = l.split('\t')
+                    if (p.size < 4) null
+                    else WatchItem(p[0].ifEmpty { null }, p[1], p[2].toIntOrNull(), p[3])
+                }
+            }.getOrDefault(emptyList())
+            if (trendRaw.isNotEmpty() && (tab == Tab.HOME || tab == Tab.MOVIES || tab == Tab.SHOWS)) refresh()
+        }
+        if (!Plex.loggedIn || trendJob?.isActive == true) return
+        if (trendFile.exists() && System.currentTimeMillis() - trendFile.lastModified() < 6 * 60 * 60 * 1000L) return
+        trendJob = lifecycleScope.launch {
+            delay(15_000)
+            val fresh = withContext(Dispatchers.IO) { runCatching { Plex.trending() }.getOrDefault(emptyList()) }
+            if (fresh.isEmpty()) return@launch
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    trendFile.writeText(fresh.joinToString("\n") { w ->
+                        listOf(w.guid.orEmpty(), w.title.replace('\t', ' '), w.year?.toString().orEmpty(), w.type)
+                            .joinToString("\t")
+                    })
+                }
+            }
+            trendRaw = fresh
+            if (tab == Tab.HOME || tab == Tab.MOVIES || tab == Tab.SHOWS) refresh()
         }
     }
 

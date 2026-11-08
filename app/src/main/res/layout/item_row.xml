@@ -16,7 +16,7 @@
         android:textSize="16sp"
         android:textStyle="bold" />
 
-    <androidx.recyclerview.widget.RecyclerView
+    <com.zap.iptv.RowList
         android:id="@+id/rowList"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

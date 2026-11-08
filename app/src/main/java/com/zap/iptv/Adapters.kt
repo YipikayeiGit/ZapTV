@@ -397,6 +397,7 @@ class RowsAdapter(private val onClick: (CatalogItem) -> Unit) :
         h.adapter.showKind = showKind
         h.adapter.submit(row.items)
         h.list.scrollToPosition(0)
+        (h.list as? RowList)?.remembered = 0
     }
 
     override fun getItemCount() = rows.size
