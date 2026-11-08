@@ -120,9 +120,15 @@ class VlcPlayerActivity : AppCompatActivity() {
         }
         mp.play()
         handler.postDelayed(freezeWatch, 2_000)
+        val s = it.introStart
+        val e = it.introEnd
+        if (s != null && e != null && e > s) {
+            intro = IntroSkip(this, findViewById(android.R.id.content), s, e, { mp.time }) { to -> mp.setTime(to) }
+        }
     }
 
     private var hardware = true
+    private var intro: IntroSkip? = null
     private var cache: LocalCache? = null
     private var localUrl: String? = null
     private var cacheNote: String? = null
@@ -244,6 +250,10 @@ class VlcPlayerActivity : AppCompatActivity() {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         val code = event.keyCode
         if (event.action == KeyEvent.ACTION_UP && swallowed.remove(code)) return true
+        if (intro?.handleKey(event) == true) {
+            swallowed += code
+            return true
+        }
         if (event.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(event)
         val handled = when (code) {
             KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { seekStep(+1); true }
@@ -472,6 +482,7 @@ class VlcPlayerActivity : AppCompatActivity() {
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         handler.removeCallbacks(freezeWatch)
+        intro?.release()
         cache?.close()
         cache = null
         if (::mp.isInitialized) {

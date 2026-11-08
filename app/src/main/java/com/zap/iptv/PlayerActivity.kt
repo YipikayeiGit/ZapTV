@@ -212,6 +212,7 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun startVod() {
         val it = item ?: return
+        setupIntro()
         val start = savedPosition(it)
         playVod(it.url, startAt = start)
         if (start > 0) {
@@ -315,6 +316,18 @@ class PlayerActivity : AppCompatActivity() {
     // ---------- Plan B: reproductor VLC ----------
 
     private var switchedToVlc = false
+    private var intro: IntroSkip? = null
+
+    private fun setupIntro() {
+        val it = item ?: return
+        val s = it.introStart ?: return
+        val e = it.introEnd ?: return
+        if (live || e <= s) return
+        intro = IntroSkip(this, findViewById(android.R.id.content), s, e, { player.currentPosition }) { to ->
+            if (!player.isCurrentMediaItemSeekable && switchToVlc(to)) return@IntroSkip
+            player.seekTo(to)
+        }
+    }
     private var resumeChecked = false
 
     /** ExoPlayer no puede con este archivo: se abre el mismo archivo original en VLC, por donde iba. */
@@ -535,6 +548,10 @@ class PlayerActivity : AppCompatActivity() {
         if (!::playerView.isInitialized) return super.dispatchKeyEvent(event)
         val code = event.keyCode
         if (event.action == KeyEvent.ACTION_UP && swallowed.remove(code)) return true
+        if (intro?.handleKey(event) == true) {
+            swallowed += code
+            return true
+        }
 
         // Atrás con los controles visibles: solo ocultarlos
         if (code == KeyEvent.KEYCODE_BACK && playerView.isControllerFullyVisible) {
@@ -639,6 +656,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        intro?.release()
         handler.removeCallbacksAndMessages(null)
         if (::player.isInitialized) player.release()
         super.onDestroy()

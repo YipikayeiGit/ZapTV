@@ -586,6 +586,9 @@ object Plex {
         val videoCodec: String? = null,
         val videoProfile: String? = null,
         val bitDepth: Int = 8,
+        /** Entradilla detectada por Plex (ms), si el servidor la tiene marcada. */
+        val introStart: Long? = null,
+        val introEnd: Long? = null,
     )
 
     /** Pide a Plex el archivo, idiomas y subtítulos de una peli o episodio. */
@@ -691,11 +694,14 @@ object Plex {
     fun details(serverId: String, key: String): Details {
         val s = servers[serverId] ?: throw IOException("servidor Plex no disponible")
         // Sin tráileres: así es rápida (los tráileres se piden aparte con trailersFor)
-        val m = JSONObject(Http.get("${s.uri}/library/metadata/$key", headers(s.token), timeout = 30_000))
+        val m = JSONObject(Http.get("${s.uri}/library/metadata/$key?includeMarkers=1", headers(s.token), timeout = 30_000))
             .getJSONObject("MediaContainer").getJSONArray("Metadata").getJSONObject(0)
         val media = m.optJSONArray("Media")?.optJSONObject(0) ?: throw IOException("sin vídeo")
         val part = media.optJSONArray("Part")?.optJSONObject(0) ?: throw IOException("sin vídeo")
         val partKey = part.getString("key")
+        val intro = m.optJSONArray("Marker")?.let { a ->
+            (0 until a.length()).mapNotNull { a.optJSONObject(it) }.firstOrNull { it.optString("type") == "intro" }
+        }
 
         val audio = LinkedHashSet<String>()
         val subLangs = LinkedHashSet<String>()
@@ -742,6 +748,8 @@ object Plex {
         return Details(
             label, withToken("${s.uri}$partKey", s.token), subs, info(s, m),
             media.str("container"), vCodec?.lowercase(), vProfile, vBits,
+            intro?.optLong("startTimeOffset", -1)?.takeIf { it >= 0 },
+            intro?.optLong("endTimeOffset", -1)?.takeIf { it > 0 },
         )
     }
 

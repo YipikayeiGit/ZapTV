@@ -539,6 +539,7 @@ class DetailActivity : AppCompatActivity() {
                             title, remux ?: d.url, d.subs, resumeKey = resumeKey, fromStart = fromStart,
                             plexServer = src.plexServer, plexKey = src.plexKey,
                             techNote = "Archivo: $tech",
+                            introStart = d.introStart, introEnd = d.introEnd,
                         )
                     }
                 }

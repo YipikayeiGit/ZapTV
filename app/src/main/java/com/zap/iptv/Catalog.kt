@@ -390,6 +390,9 @@ data class PlayItem(
     val plexKey: String? = null,
     /** Formato del archivo según Plex, para el diagnóstico. */
     val techNote: String? = null,
+    /** Entradilla del capítulo (ms), para el botón "Saltar intro". */
+    val introStart: Long? = null,
+    val introEnd: Long? = null,
 )
 
 object Playback {

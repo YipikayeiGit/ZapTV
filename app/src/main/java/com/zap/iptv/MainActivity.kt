@@ -169,6 +169,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // Con fuentes ya configuradas, al abrir se ve "Cargando" (no el botón de añadir fuente)
+        startingUp = prefs.getString(KEY_SRC, null) != null || Plex.loggedIn
         selectTab(tab)
         showLastCrash()
 
@@ -197,7 +199,9 @@ class MainActivity : AppCompatActivity() {
             }
             val iptv = iptvJob.await()
             val plex = plexJob.await()
+            startingUp = false
             if (iptv == null && plex == null) rebuild()
+            updateEmpty()
 
             val now = System.currentTimeMillis()
             val needIptv = !handled && src != null && (iptv == null || now - prefs.getLong("iptv_time", 0) > STALE)
@@ -579,6 +583,8 @@ class MainActivity : AppCompatActivity() {
         content.removeCallbacks(epgTicker)
     }
 
+    private var startingUp = false
+
     private fun updateEmpty() {
         val count = content.adapter?.itemCount ?: 0
         val nothing = when (tab) {
@@ -588,9 +594,9 @@ class MainActivity : AppCompatActivity() {
             Tab.HOME -> Catalog.movies.isEmpty() && Catalog.shows.isEmpty()
             Tab.WATCH -> Catalog.watchAll.isEmpty()
         }
-        progress.isVisible = busy > 0 && nothing
+        progress.isVisible = (busy > 0 || startingUp) && nothing
         busyBar.isVisible = busy > 0 && !nothing
-        empty.isVisible = busy == 0 && (nothing || count == 0)
+        empty.isVisible = busy == 0 && !(startingUp && nothing) && (nothing || count == 0)
         emptyAdd.isVisible = nothing
         emptyText.text = when {
             !nothing -> "Sin resultados"
