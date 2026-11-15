@@ -16,6 +16,8 @@ import androidx.annotation.OptIn
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -345,6 +347,38 @@ class PlayerActivity : AppCompatActivity() {
 
     // ---------- Errores ----------
 
+    private var retries = 0
+    private var lastRetry = 0L
+
+    private fun isNetworkError(e: PlaybackException) = e.errorCode in setOf(
+        PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+        PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+        PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
+        PlaybackException.ERROR_CODE_TIMEOUT,
+    )
+
+    /** Hasta 5 reintentos (cada vez esperando un poco más); si pasa mucho rato sin fallos, se reinicia la cuenta. */
+    private fun retryVod(): Boolean {
+        val it = item ?: return false
+        val now = System.currentTimeMillis()
+        if (now - lastRetry > 3 * 60_000L) retries = 0
+        if (retries >= 5) return false
+        retries++
+        lastRetry = now
+        val pos = player.currentPosition.takeIf { it > 0 } ?: savedPosition(it)
+        showLabel("Se ha cortado la conexión con el servidor · reconectando ($retries/5)…", sticky = true)
+        lifecycleScope.launch {
+            delay(2_000L * retries)
+            // Puede que el servidor haya cambiado de dirección: preguntarla de nuevo a Plex
+            if (it.plexServer != null) withContext(Dispatchers.IO) { runCatching { Plex.reconnect() } }
+            if (isFinishing) return@launch
+            playVod(Plex.fixUrl(it.url) ?: it.url, startAt = pos)
+            showLabel(it.title)
+        }
+        return true
+    }
+
     private fun handleError(error: PlaybackException) {
         if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
             player.seekToDefaultPosition()
@@ -357,6 +391,9 @@ class PlayerActivity : AppCompatActivity() {
             else showLabel("No se puede reproducir · ${channels[index].name}", sticky = true)
             return
         }
+        // Corte de conexión o rechazo puntual del servidor a mitad de capítulo:
+        // reconectar y seguir en el mismo punto, sin que tengas que hacer nada
+        if (isNetworkError(error) && retryVod()) return
         // Sin conversión: si ExoPlayer no puede, el mismo archivo original se abre en VLC
         if (error.errorCode != PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS &&
             error.errorCode != PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED &&
@@ -371,8 +408,10 @@ class PlayerActivity : AppCompatActivity() {
             PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
             PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED ->
                 "Este dispositivo no puede reproducir el formato original de este archivo"
-            PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ->
-                "El servidor ha rechazado la reproducción (¿hace falta pase remoto de Plex?)"
+            PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> {
+                val http = (error.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
+                "El servidor no responde bien (error ${http ?: "HTTP"}) · prueba de nuevo en un rato"
+            }
             PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
             PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ->
                 "No se puede conectar con el servidor"
