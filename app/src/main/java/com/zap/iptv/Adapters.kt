@@ -181,6 +181,7 @@ class PosterAdapter(
 
     @SuppressLint("NotifyDataSetChanged")
     fun submit(list: List<CatalogItem>) {
+        if (list == items) return
         items = list
         notifyDataSetChanged()
     }
@@ -213,12 +214,18 @@ class PosterAdapter(
                 }
             }
             v.setOnKeyListener { _, code, ev ->
+                val cb = onVertical
+                if (cb != null && ev.action == KeyEvent.ACTION_DOWN) {
+                    val p = bindingAdapterPosition
+                    // En una fila: al llegar al final (o al principio) no se salta a otra fila
+                    if (code == KeyEvent.KEYCODE_DPAD_RIGHT && p == items.size - 1) return@setOnKeyListener true
+                    if (code == KeyEvent.KEYCODE_DPAD_LEFT && p == 0) return@setOnKeyListener true
+                }
                 val dir = when (code) {
                     KeyEvent.KEYCODE_DPAD_UP -> -1
                     KeyEvent.KEYCODE_DPAD_DOWN -> 1
                     else -> 0
                 }
-                val cb = onVertical
                 if (dir == 0 || cb == null || ev.action != KeyEvent.ACTION_DOWN) return@setOnKeyListener false
                 val p = bindingAdapterPosition
                 p != RecyclerView.NO_POSITION && cb(p, dir)
@@ -402,8 +409,8 @@ class RowsAdapter(private val onClick: (CatalogItem) -> Unit) :
 
     private var rows: List<Row> = emptyList()
 
-    /** Carátula en la que estabas en cada fila (por número de fila). */
-    private val remembered = HashMap<Int, Int>()
+    /** Hasta dónde estaba desplazada cada fila (por título), para no perderlo al actualizar. */
+    private val remembered = HashMap<String, Int>()
     private var outer: RecyclerView? = null
 
     override fun onAttachedToRecyclerView(recyclerView: RecyclerView) {
@@ -424,17 +431,23 @@ class RowsAdapter(private val onClick: (CatalogItem) -> Unit) :
         val target = from + dir
         if (target < 0) return false // desde la primera fila, hacia arriba: pestañas
         if (target >= rows.size) return true // última fila: no hacer nada
+        // Centro (en pantalla) de la carátula en la que estás
+        val cur = rv.findFocus()
+        val curX = cur?.let { val l = IntArray(2); it.getLocationOnScreen(l); l[0] + it.width / 2 }
         fun focusIn(): Boolean {
             val vh = rv.findViewHolderForAdapterPosition(target) as? VH ?: return false
-            val idx = (remembered[target] ?: 0).coerceIn(0, (vh.adapter.itemCount - 1).coerceAtLeast(0))
-            val lm = vh.list.layoutManager as LinearLayoutManager
-            val v = lm.findViewByPosition(idx)
-            if (v != null && v.left >= 0 && v.right <= vh.list.width) {
-                v.requestFocus()
-            } else {
-                lm.scrollToPositionWithOffset(idx, vh.list.paddingLeft)
-                vh.list.post { lm.findViewByPosition(idx)?.requestFocus() }
+            val list = vh.list
+            val kids = (0 until list.childCount).map { list.getChildAt(it) }.filter { it.isFocusable }
+            if (kids.isEmpty()) return false
+            // La que está visualmente justo encima/debajo; mejor una que se vea entera
+            // (así la fila no se desplaza y el foco no se va corriendo)
+            val whole = kids.filter { it.left >= 0 && it.right <= list.width }.ifEmpty { kids }
+            val best = if (curX == null) whole.minBy { it.left } else whole.minBy { v ->
+                val l = IntArray(2)
+                v.getLocationOnScreen(l)
+                kotlin.math.abs(l[0] + v.width / 2 - curX)
             }
+            best.requestFocus()
             return true
         }
         if (!focusIn()) {
@@ -449,10 +462,65 @@ class RowsAdapter(private val onClick: (CatalogItem) -> Unit) :
 
     @SuppressLint("NotifyDataSetChanged")
     fun submit(list: List<Row>) {
+        val old = rows
+        val kindChanged = showKind != lastShowKind
+        lastShowKind = showKind
+        // Si no ha cambiado nada, no se toca (así el foco no salta a las pestañas)
+        if (!kindChanged && list == old) return
+        val rv = outer
+        // Dónde estaba el foco, para devolverlo al mismo título tras actualizar
+        var focusTitle: String? = null
+        var focusItem: CatalogItem? = null
+        var focusIdx = 0
+        var focusRow = 0
+        val focused = rv?.findFocus()
+        if (rv != null && focused != null) {
+            val rowView = rv.findContainingItemView(focused)
+            val r = rowView?.let { rv.getChildAdapterPosition(it) } ?: RecyclerView.NO_POSITION
+            val vh = rowView?.let { rv.getChildViewHolder(it) } as? VH
+            if (r != RecyclerView.NO_POSITION && r < old.size && vh != null) {
+                val itemView = vh.list.findContainingItemView(focused)
+                val i = itemView?.let { vh.list.getChildAdapterPosition(it) } ?: RecyclerView.NO_POSITION
+                if (i != RecyclerView.NO_POSITION && i < old[r].items.size) {
+                    focusRow = r
+                    focusTitle = old[r].title
+                    focusItem = old[r].items[i]
+                    focusIdx = i
+                }
+            }
+        }
         rows = list
-        remembered.clear()
-        notifyDataSetChanged()
+        val sameShape = !kindChanged && old.size == list.size && old.indices.all { old[it].title == list[it].title && old[it].landscape == list[it].landscape }
+        if (sameShape) {
+            // Solo se repintan las filas que cambian
+            for (i in list.indices) if (old[i].items != list[i].items) notifyItemChanged(i)
+        } else {
+            notifyDataSetChanged()
+        }
+        val title = focusTitle ?: return
+        if (rv == null) return
+        rv.post {
+            val r = list.indexOfFirst { it.title == title }.takeIf { it >= 0 } ?: focusRow.coerceAtMost(list.size - 1)
+            if (r < 0) return@post
+            val items = list[r].items
+            val i = items.indexOfFirst { it.key == focusItem?.key }.takeIf { it >= 0 }
+                ?: focusIdx.coerceAtMost(items.size - 1)
+            if (i < 0) return@post
+            if (rv.findFocus() != null && rv.findFocus() !== rv) {
+                // Sigue teniendo el foco algo de la lista: no molestar
+                val still = rv.findFocus()!!
+                if (still.isShown && still.isFocused) return@post
+            }
+            val vh = rv.findViewHolderForAdapterPosition(r) as? VH ?: return@post
+            val lm = vh.list.layoutManager as LinearLayoutManager
+            lm.findViewByPosition(i)?.requestFocus() ?: run {
+                lm.scrollToPosition(i)
+                vh.list.post { lm.findViewByPosition(i)?.requestFocus() }
+            }
+        }
     }
+
+    private var lastShowKind = false
 
     override fun getItemViewType(position: Int) = if (rows[position].landscape) 1 else 0
 
@@ -477,7 +545,7 @@ class RowsAdapter(private val onClick: (CatalogItem) -> Unit) :
             }
             adapter.onFocusIndex = { i ->
                 val row = bindingAdapterPosition
-                if (row != RecyclerView.NO_POSITION) remembered[row] = i
+                if (row != RecyclerView.NO_POSITION && row < rows.size) remembered[rows[row].title] = i
             }
             list.layoutManager = LinearLayoutManager(v.context, RecyclerView.HORIZONTAL, false)
             list.adapter = adapter
@@ -495,7 +563,7 @@ class RowsAdapter(private val onClick: (CatalogItem) -> Unit) :
         h.title.text = row.title
         h.adapter.showKind = showKind
         h.adapter.submit(row.items)
-        val idx = remembered[position] ?: 0
+        val idx = (remembered[row.title] ?: 0).coerceIn(0, (row.items.size - 1).coerceAtLeast(0))
         (h.list.layoutManager as LinearLayoutManager).scrollToPositionWithOffset(idx, 0)
     }
 

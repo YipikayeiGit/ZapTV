@@ -348,6 +348,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Sin nada enfocado en las filas: la cabecera y el fondo muestran el primer título. */
+    private fun heroForFirst(rows: List<Row>) {
+        if (content.hasFocus()) return
+        rows.firstOrNull()?.items?.firstOrNull()?.let { showHero(it) }
+    }
+
     private fun updateHero() {
         if (!::hero.isInitialized) return
         if (tab == Tab.LIVE) backdrop.hide()
@@ -535,6 +541,7 @@ class MainActivity : AppCompatActivity() {
                 useAdapter(rowsAdapter)
                 rowsAdapter.showKind = true
                 rowsAdapter.submit(rows)
+                heroForFirst(rows)
             } else {
                 val shows = t == Tab.SHOWS
                 val src: List<CatalogItem> = if (shows) Catalog.shows else Catalog.movies
@@ -546,6 +553,7 @@ class MainActivity : AppCompatActivity() {
                     useAdapter(rowsAdapter)
                     rowsAdapter.showKind = false
                     rowsAdapter.submit(rows)
+                    heroForFirst(rows)
                 } else {
                     val res = withContext(Dispatchers.Default) {
                         when {
