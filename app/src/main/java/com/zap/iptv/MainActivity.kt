@@ -530,31 +530,28 @@ class MainActivity : AppCompatActivity() {
                 useAdapter(posterAdapter)
                 posterAdapter.showKind = true
                 posterAdapter.submit(Catalog.watchAll)
-            } else if (t == Tab.HOME) {
-                // Inicio: pelis y series mezcladas
-                val resume = resumeItems(Tab.HOME)
-                val newEps = Catalog.newEpisodes
-                val rows = withContext(Dispatchers.Default) {
-                    val genres = (Catalog.movieGenres + Catalog.showGenres).distinctBy { Titles.genreKey(it) }
-                    Home.rows(Catalog.movies + Catalog.shows, resume, genres, emptyList(), newEps, trendingItems())
+            } else if (t == Tab.HOME || f == VodFilter.Home) {
+                // Filas (Inicio, Películas, Series): lo último calculado se enseña al instante
+                // y se recalcula en segundo plano; solo se repinta si algo ha cambiado
+                val cached = rowsCache[t]
+                if (cached != null) {
+                    showRows(t, cached)
+                    if (scrollTop) content.scrollToPosition(0)
+                    updateEmpty()
                 }
-                useAdapter(rowsAdapter)
-                rowsAdapter.showKind = true
-                rowsAdapter.submit(rows)
-                heroForFirst(rows)
+                val rows = withContext(Dispatchers.Default) { computeRows(t) }
+                rowsCache[t] = rows
+                showRows(t, rows)
+                if (cached != null) {
+                    updateEmpty()
+                    warmRows()
+                    return@launch
+                }
+                warmRows()
             } else {
                 val shows = t == Tab.SHOWS
                 val src: List<CatalogItem> = if (shows) Catalog.shows else Catalog.movies
-                if (f == VodFilter.Home) {
-                    val genres = if (shows) Catalog.showGenres else Catalog.movieGenres
-                    val resume = resumeItems(t)
-                    val newEps = if (shows) Catalog.newEpisodes else emptyList()
-                    val rows = withContext(Dispatchers.Default) { Home.rows(src, resume, genres, emptyList(), newEps, trendingItems()) }
-                    useAdapter(rowsAdapter)
-                    rowsAdapter.showKind = false
-                    rowsAdapter.submit(rows)
-                    heroForFirst(rows)
-                } else {
+                run {
                     val res = withContext(Dispatchers.Default) {
                         when {
                             f is VodFilter.From -> src.filter { f.origin in it.origins }.sortedByDescending { it.added }
@@ -570,6 +567,40 @@ class MainActivity : AppCompatActivity() {
             }
             if (scrollTop) content.scrollToPosition(0)
             updateEmpty()
+        }
+    }
+
+    // ---------- Filas precalculadas por pestaña (para cambiar de pestaña sin esperas) ----------
+
+    private val rowsCache = java.util.concurrent.ConcurrentHashMap<Tab, List<Row>>()
+    private var warmJob: Job? = null
+
+    /** Todo el cálculo pesado, fuera del hilo de la pantalla. */
+    private fun computeRows(t: Tab): List<Row> = when (t) {
+        Tab.HOME -> {
+            val genres = (Catalog.movieGenres + Catalog.showGenres).distinctBy { Titles.genreKey(it) }
+            Home.rows(Catalog.movies + Catalog.shows, resumeItems(Tab.HOME), genres, emptyList(), Catalog.newEpisodes, trendingItems())
+        }
+        Tab.SHOWS -> Home.rows(Catalog.shows, resumeItems(t), Catalog.showGenres, emptyList(), Catalog.newEpisodes, trendingItems())
+        else -> Home.rows(Catalog.movies, resumeItems(t), Catalog.movieGenres, emptyList(), emptyList(), trendingItems())
+    }
+
+    private fun showRows(t: Tab, rows: List<Row>) {
+        useAdapter(rowsAdapter)
+        rowsAdapter.showKind = t == Tab.HOME
+        rowsAdapter.submit(rows)
+        heroForFirst(rows)
+    }
+
+    /** Con la app parada, se dejan preparadas las otras pestañas de filas. */
+    private fun warmRows() {
+        warmJob?.cancel()
+        warmJob = lifecycleScope.launch {
+            delay(1_500)
+            for (t in listOf(Tab.HOME, Tab.MOVIES, Tab.SHOWS)) {
+                if (t == tab) continue
+                rowsCache[t] = withContext(Dispatchers.Default) { computeRows(t) }
+            }
         }
     }
 
