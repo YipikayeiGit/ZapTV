@@ -285,6 +285,7 @@ class MainActivity : AppCompatActivity() {
         content.layoutManager = when {
             a === posterAdapter -> GridLayoutManager(this, spans())
             a === landAdapter -> GridLayoutManager(this, spansLand())
+            a === rowsAdapter -> RowsLayoutManager(this)
             else -> LinearLayoutManager(this)
         }
         content.adapter = a
@@ -634,7 +635,7 @@ class MainActivity : AppCompatActivity() {
             Tab.WATCH -> Catalog.watchAll.isEmpty()
         }
         progress.isVisible = (busy > 0 || startingUp) && nothing
-        busyBar.isVisible = busy > 0 && !nothing
+        busyBar.isVisible = loudBusy > 0 && !nothing
         empty.isVisible = busy == 0 && !(startingUp && nothing) && (nothing || count == 0)
         emptyAdd.isVisible = nothing
         emptyText.text = when {
@@ -783,10 +784,14 @@ class MainActivity : AppCompatActivity() {
 
     // ---------- Carga de fuentes ----------
 
-    private fun setBusy(delta: Int) {
+    /** Las actualizaciones automáticas en segundo plano no enseñan la barra de arriba. */
+    private fun setBusy(delta: Int, silent: Boolean = false) {
         busy = (busy + delta).coerceAtLeast(0)
+        if (!silent) loudBusy = (loudBusy + delta).coerceAtLeast(0)
         updateEmpty()
     }
+
+    private var loudBusy = 0
 
     private fun reloadAll() {
         val src = prefs.getString(KEY_SRC, null)
@@ -804,7 +809,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshIptv(src: String, preloaded: String? = null, silent: Boolean = false) {
-        setBusy(1)
+        setBusy(1, silent)
         lifecycleScope.launch {
             try {
                 val data = loadLock.withLock {
@@ -821,13 +826,13 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 toast("No se pudo cargar la lista: ${e.message ?: e.javaClass.simpleName}")
             } finally {
-                setBusy(-1)
+                setBusy(-1, silent)
             }
         }
     }
 
     private fun refreshPlex(silent: Boolean = false) {
-        setBusy(1)
+        setBusy(1, silent)
         lifecycleScope.launch {
             try {
                 val data = loadLock.withLock {
@@ -860,7 +865,7 @@ class MainActivity : AppCompatActivity() {
                     toast("No se pudo cargar Plex: ${e.message ?: e.javaClass.simpleName}")
                 }
             } finally {
-                setBusy(-1)
+                setBusy(-1, silent)
             }
         }
     }
@@ -1255,5 +1260,24 @@ class MainActivity : AppCompatActivity() {
         private const val FAV = "\u0000favoritos"
         private const val STALE = 12 * 60 * 60 * 1000L
         private val URL_RE = Regex("""https?://\S+""")
+    }
+}
+
+/**
+ * Lista de filas: al cambiar de fila con el mando, la fila enfocada se coloca siempre arriba
+ * con un desplazamiento suave, tanto al bajar como al subir (antes al subir solo se movía a veces).
+ */
+class RowsLayoutManager(ctx: android.content.Context) : LinearLayoutManager(ctx) {
+    override fun requestChildRectangleOnScreen(
+        parent: RecyclerView,
+        child: android.view.View,
+        rect: android.graphics.Rect,
+        immediate: Boolean,
+        focusedChildVisible: Boolean,
+    ): Boolean {
+        val dy = child.top - parent.paddingTop
+        if (dy == 0) return false
+        if (immediate) parent.scrollBy(0, dy) else parent.smoothScrollBy(0, dy)
+        return true
     }
 }

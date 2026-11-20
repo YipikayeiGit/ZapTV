@@ -81,9 +81,17 @@ object Episodes {
      * hace poco, y posterior al último que viste. (Una serie antigua que vas viendo
      * poco a poco no tiene "capítulos nuevos": solo te faltan por ver.)
      */
-    fun isNew(e: Episode, lastCode: Int, lastTime: Long): Boolean =
-        lastTime > 0 && e.aired > lastTime && code(e) > lastCode &&
-            e.aired > System.currentTimeMillis() - RECENT
+    /**
+     * Capítulo nuevo: posterior al último que viste, reciente (estrenado o llegado en los
+     * últimos 90 días) y que salió (o llegó a tus fuentes) después de que vieras el último.
+     * Lo de "llegó" cuenta para cuando el capítulo se estrena antes pero Plex/IPTV lo sube días después.
+     */
+    fun isNew(e: Episode, lastCode: Int, lastTime: Long): Boolean {
+        if (lastTime <= 0 || code(e) <= lastCode) return false
+        val recent = System.currentTimeMillis() - RECENT
+        val fresh = e.aired > recent || (e.aired <= 0 && e.added > recent)
+        return fresh && (e.aired > lastTime || e.added > lastTime)
+    }
 
     fun newKeys(ctx: Context): Set<String> = prefs(ctx).getStringSet("new2", emptySet()).orEmpty()
 

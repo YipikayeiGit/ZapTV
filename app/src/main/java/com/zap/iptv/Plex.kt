@@ -528,6 +528,7 @@ object Plex {
                 watched = m.optInt("viewCount") > 0,
                 offsetMs = m.optLong("viewOffset"),
                 aired = parseDate(m.str("originallyAvailableAt")).takeIf { it > 0 } ?: (m.optLong("addedAt") * 1000),
+                added = m.optLong("addedAt") * 1000,
             )
         }
     }

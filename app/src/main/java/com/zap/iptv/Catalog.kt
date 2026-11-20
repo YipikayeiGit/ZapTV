@@ -153,6 +153,8 @@ data class Episode(
     val offsetMs: Long = 0,
     /** Fecha de estreno (o de alta si no se sabe), en milisegundos. 0 = desconocida. */
     val aired: Long = 0,
+    /** Cuándo llegó a tus fuentes (Plex o IPTV), en milisegundos. 0 = desconocido. */
+    val added: Long = 0,
 )
 
 data class IptvData(val live: List<Channel>, val movies: List<Movie>, val shows: List<Show>) {
@@ -505,6 +507,7 @@ object Merge {
                 watched = o.watched || e.watched,
                 offsetMs = maxOf(o.offsetMs, e.offsetMs),
                 aired = if (o.aired > 0) o.aired else e.aired,
+                added = listOf(o.added, e.added).filter { it > 0 }.minOrNull() ?: 0,
             )
         }
         return map.values.sortedWith(compareBy({ it.season }, { it.number }))
