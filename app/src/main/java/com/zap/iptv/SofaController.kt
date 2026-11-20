@@ -75,7 +75,6 @@ class SofaController(private val act: Activity, root: FrameLayout, private val p
         Sofa.listener = ::onMessage
         Sofa.position = { canon() }
         Sofa.playing = { p.isPlaying() }
-        handler.post(tick)
     }
 
     private fun canon() = p.position() - offset
@@ -257,7 +256,7 @@ class SofaController(private val act: Activity, root: FrameLayout, private val p
         val t0 = android.os.SystemClock.uptimeMillis()
         for (i in 0..3) {
             handler.postAtTime({
-                if (!counting) return@postDelayed
+                if (!counting) return@postAtTime
                 if (i < 3) {
                     countdown.text = "${3 - i}"
                     tones?.startTone(ToneGenerator.TONE_PROP_BEEP, 180)
@@ -312,6 +311,10 @@ class SofaController(private val act: Activity, root: FrameLayout, private val p
     private fun clock(ms: Long): String {
         val s = ms / 1000
         return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
+    }
+
+    init {
+        handler.post(tick)
     }
 
     companion object {

@@ -143,7 +143,9 @@ class VlcPlayerActivity : AppCompatActivity() {
             override fun isBuffering() = loading.isVisible
             override fun play() = mp.play()
             override fun pause() = mp.pause()
-            override fun seek(ms: Long) = mp.setTime(ms.coerceAtLeast(0))
+            override fun seek(ms: Long) {
+                mp.setTime(ms.coerceAtLeast(0))
+            }
             override fun setRate(rate: Float) {
                 mp.rate = rate
             }
