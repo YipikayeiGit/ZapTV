@@ -66,6 +66,8 @@ object Sofa {
     /** Lo que se está viendo aquí (clave local), para no reabrirlo si la otra tele lo anuncia. */
     @Volatile var localKey: String? = null
     private var lastOpen: JSONObject? = null
+    private var lastOpenedKey: String? = null
+    private var lastOpenedAt = 0L
 
     val myId: String by lazy {
         val p = app.getSharedPreferences("zap", Context.MODE_PRIVATE)
@@ -241,7 +243,14 @@ object Sofa {
             toast("La otra tele está viendo «$title», pero no lo tienes en tu Zap")
             return
         }
-        if (keyOf(found, s, n) == localKey && listener != null) return // ya lo estás viendo
+        val k = keyOf(found, s, n)
+        if (k == localKey && listener != null) return // ya lo estás viendo
+        // El mismo aviso repetido (p. ej. al conectar): no abrirlo dos veces
+        val now = System.currentTimeMillis()
+        if (k == lastOpenedKey && now - lastOpenedAt < 20_000) return
+        lastOpenedKey = k
+        lastOpenedAt = now
+        localKey = k
         lastOpen = j
         pendingStart = j.optLong("p", 0L)
         // Cerrar lo que se esté viendo y abrir lo nuevo
