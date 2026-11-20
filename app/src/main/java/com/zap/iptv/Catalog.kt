@@ -107,7 +107,7 @@ data class Movie(
     override val genreKeys: Set<String> by lazy { genres.mapTo(HashSet()) { Titles.genreKey(it) } }
     override val quality: String? get() = Quality.best(sources.map { it.quality })
     override val ids: List<String> get() = sources.flatMap { listOfNotNull(it.plexGuid) + it.extIds } + extIds
-    override val searchKeys: List<String> by lazy { (listOf(key) + altTitles.map { Titles.key(it) }).distinct() }
+    override val searchKeys: List<String> by lazy { (listOf(key, Titles.key(title)) + altTitles.map { Titles.key(it) }).distinct() }
 }
 
 data class Show(
@@ -130,7 +130,7 @@ data class Show(
 ) : CatalogItem {
     override val genreKeys: Set<String> by lazy { genres.mapTo(HashSet()) { Titles.genreKey(it) } }
     override val ids: List<String> get() = plex.mapNotNull { it.guid } + extIds
-    override val searchKeys: List<String> by lazy { (listOf(key) + altTitles.map { Titles.key(it) }).distinct() }
+    override val searchKeys: List<String> by lazy { (listOf(key, Titles.key(title)) + altTitles.map { Titles.key(it) }).distinct() }
 
     override val origins: Set<Origin>
         get() = HashSet<Origin>().apply {
@@ -407,6 +407,28 @@ object Playback {
 object Merge {
     private fun yearsMatch(a: Int?, b: Int?) = a == null || b == null || abs(a - b) <= 1
 
+    /**
+     * Dos títulos iguales que en realidad son obras distintas (p. ej. «La odisea» de Nolan y la
+     * de The Asylum, del mismo año): si los dos traen identificador del mismo tipo (IMDb, TMDb,
+     * Plex) y no coincide ninguno, no son la misma.
+     */
+    private fun idsConflict(a: List<String>, b: List<String>): Boolean {
+        if (a.isEmpty() || b.isEmpty()) return false
+        fun scheme(id: String) = id.substringBefore("://")
+        val byA = a.groupBy(::scheme)
+        val byB = b.groupBy(::scheme)
+        for ((k, va) in byA) {
+            val vb = byB[k] ?: continue
+            if (va.none { it in vb }) return true
+        }
+        return false
+    }
+
+    /** Clave propia para el segundo título homónimo (para no compartir progreso ni fila). */
+    private fun distinctKey(key: String, year: Int?, ids: List<String>) =
+        key + "~" + (ids.filter { it.startsWith("imdb://") || it.startsWith("tmdb://") }.minOrNull()
+            ?: ids.minOrNull() ?: year?.toString() ?: "2")
+
     fun movies(all: List<Movie>): List<Movie> {
         val out = ArrayList<Movie>(all.size)
         val index = HashMap<String, MutableList<Int>>()
@@ -416,7 +438,7 @@ object Merge {
             val mIds = m.ids
             // Primero por identificador (IMDb/TMDb/Plex), si no por título y año
             val hit = mIds.firstNotNullOfOrNull { byId[it] }
-                ?: index[m.key]?.firstOrNull { yearsMatch(out[it].year, m.year) }
+                ?: index[m.key]?.firstOrNull { yearsMatch(out[it].year, m.year) && !idsConflict(out[it].ids, mIds) }
             val pos: Int
             if (hit != null) {
                 pos = hit
@@ -435,8 +457,10 @@ object Merge {
                 )
             } else {
                 pos = out.size
-                index.getOrPut(m.key) { ArrayList(1) } += pos
-                out += m
+                val same = index.getOrPut(m.key) { ArrayList(1) }
+                // Homónimo de otra peli ya vista: su propia clave
+                out += if (same.isEmpty()) m else m.copy(key = distinctKey(m.key, m.year, mIds))
+                same += pos
             }
             for (id in mIds) byId.putIfAbsent(id, pos)
         }
@@ -452,7 +476,7 @@ object Merge {
             if (s.key.isEmpty()) continue
             val sIds = s.ids
             val hit = sIds.firstNotNullOfOrNull { byId[it] }
-                ?: index[s.key]?.firstOrNull { yearsMatch(out[it].year, s.year) }
+                ?: index[s.key]?.firstOrNull { yearsMatch(out[it].year, s.year) && !idsConflict(out[it].ids, sIds) }
             val pos: Int
             if (hit != null) {
                 pos = hit
@@ -474,8 +498,9 @@ object Merge {
                 )
             } else {
                 pos = out.size
-                index.getOrPut(s.key) { ArrayList(1) } += pos
-                out += s
+                val same = index.getOrPut(s.key) { ArrayList(1) }
+                out += if (same.isEmpty()) s else s.copy(key = distinctKey(s.key, s.year, sIds))
+                same += pos
             }
             for (id in sIds) byId.putIfAbsent(id, pos)
         }
