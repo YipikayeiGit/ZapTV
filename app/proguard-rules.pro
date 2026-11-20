@@ -5,3 +5,7 @@
 # VLC usa JNI: no renombrar sus clases
 -keep class org.videolan.libvlc.** { *; }
 -dontwarn org.videolan.libvlc.**
+
+# MQTT (ver en compañía): carga clases por nombre
+-keep class org.eclipse.paho.client.mqttv3.** { *; }
+-dontwarn org.eclipse.paho.**

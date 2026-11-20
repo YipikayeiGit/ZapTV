@@ -58,7 +58,8 @@ class VlcPlayerActivity : AppCompatActivity() {
             return
         }
         item = it
-        startAt = intent.getLongExtra(EXTRA_START, -1L).takeIf { s -> s >= 0 }
+        startAt = Sofa.pendingStart?.also { Sofa.pendingStart = null }
+            ?: intent.getLongExtra(EXTRA_START, -1L).takeIf { s -> s >= 0 }
             ?: if (it.fromStart) 0L else it.resumeKey?.let { k -> resume.getLong(k, 0L) } ?: 0L
 
         setContentView(R.layout.activity_vlc)
@@ -120,14 +121,34 @@ class VlcPlayerActivity : AppCompatActivity() {
         }
         mp.play()
         handler.postDelayed(freezeWatch, 2_000)
+        setupSofa()
         val s = it.introStart
         val e = it.introEnd
         if (s != null && e != null && e > s) {
-            intro = IntroSkip(this, findViewById(android.R.id.content), s, e, { mp.time }) { to -> mp.setTime(to) }
+            intro = IntroSkip(this, findViewById(android.R.id.content), s, e, { mp.time }) { to ->
+                mp.setTime(to)
+                sofa?.userSeeked(to)
+            }
         }
     }
 
     private var hardware = true
+    private var sofa: SofaController? = null
+
+    private fun setupSofa() {
+        if (!Sofa.active || sofa != null) return
+        sofa = SofaController(this, findViewById(android.R.id.content), object : SofaPlayer {
+            override fun position() = mp.time
+            override fun isPlaying() = mp.isPlaying
+            override fun isBuffering() = loading.isVisible
+            override fun play() = mp.play()
+            override fun pause() = mp.pause()
+            override fun seek(ms: Long) = mp.setTime(ms.coerceAtLeast(0))
+            override fun setRate(rate: Float) {
+                mp.rate = rate
+            }
+        })
+    }
     private var intro: IntroSkip? = null
     private var cache: LocalCache? = null
     private var localUrl: String? = null
@@ -255,6 +276,10 @@ class VlcPlayerActivity : AppCompatActivity() {
             return true
         }
         if (event.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(event)
+        if (sofa?.handleKey(event) == true) {
+            swallowed += code
+            return true
+        }
         val handled = when (code) {
             KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { seekStep(+1); true }
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND -> { seekStep(-1); true }
@@ -275,7 +300,9 @@ class VlcPlayerActivity : AppCompatActivity() {
                 if (bar.isVisible) {
                     if (event.repeatCount == 0) {
                         bar.isVisible = false
-                        if (!mp.isPlaying) mp.play()
+                        if (!mp.isPlaying) {
+                            if (sofa?.ready == true) sofa?.userPlayRequested() else mp.play()
+                        }
                     }
                     true
                 } else {
@@ -293,6 +320,18 @@ class VlcPlayerActivity : AppCompatActivity() {
 
     private fun togglePause() {
         commitSeek()
+        val s = sofa
+        if (s != null && s.ready) {
+            if (mp.isPlaying) {
+                mp.pause()
+                showBar(stay = true)
+                s.userPaused()
+            } else {
+                bar.isVisible = false
+                s.userPlayRequested()
+            }
+            return
+        }
         if (mp.isPlaying) {
             mp.pause()
             showBar(stay = true)
@@ -377,7 +416,11 @@ class VlcPlayerActivity : AppCompatActivity() {
 
     private fun commitSeek() {
         handler.removeCallbacks(seekCommit)
-        if (seekOffset != 0L) mp.setTime(seekTarget())
+        if (seekOffset != 0L) {
+            val t = seekTarget()
+            mp.setTime(t)
+            sofa?.userSeeked(t)
+        }
         seekOffset = 0L
         seekCount = 0
         seekDir = 0
@@ -480,6 +523,7 @@ class VlcPlayerActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        sofa?.release()
         handler.removeCallbacksAndMessages(null)
         handler.removeCallbacks(freezeWatch)
         intro?.release()

@@ -31,6 +31,7 @@ class ZapApp : Application(), ImageLoaderFactory {
 
     override fun onCreate() {
         super.onCreate()
+        Sofa.init(this)
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             runCatching {

@@ -90,6 +90,23 @@ class DetailActivity : AppCompatActivity() {
             is Movie -> showMovie(x)
             is Show -> showSeries(x)
         }
+        // Abierta por "Ver en compañía": arrancar directamente lo que está viendo la otra tele
+        sofaEp = intent.getIntExtra(EXTRA_SOFA_SEASON, -2).takeIf { it != -2 }
+            ?.let { it to intent.getIntExtra(EXTRA_SOFA_EPISODE, -1) }
+        val m = item as? Movie
+        if (sofaEp != null && m != null) {
+            sofaEp = null
+            m.sources.sortedBy { it.origin.ordinal }.firstOrNull()?.let { src ->
+                startPlayback(m.title, src, "movie:${m.key}", fromStart = true, others = m.sources)
+            }
+        }
+    }
+
+    private var sofaEp: Pair<Int, Int>? = null
+
+    companion object {
+        const val EXTRA_SOFA_SEASON = "sofa_season"
+        const val EXTRA_SOFA_EPISODE = "sofa_episode"
     }
 
     /** Año · duración · valoración · clasificación · géneros · fuentes */
@@ -358,6 +375,17 @@ class DetailActivity : AppCompatActivity() {
                 ).show()
             }
             Episodes.markSeen(this@DetailActivity, s, Episodes.maxCode(episodes))
+            sofaEp?.let { (season, number) ->
+                sofaEp = null
+                val ep = episodes.firstOrNull { it.season == season && it.number == number }
+                val src = ep?.sources?.sortedBy { it.origin.ordinal }?.firstOrNull()
+                if (ep == null || src == null) {
+                    Sofa.send("missing") { put("t", "${s.title} T${season}E$number") }
+                    Toast.makeText(this@DetailActivity, "No tienes ese capítulo en tu Zap", Toast.LENGTH_LONG).show()
+                } else {
+                    startPlayback("${s.title} · T${ep.season}E${ep.number}", src, epKey(ep), fromStart = true, others = ep.sources)
+                }
+            }
         }
     }
 
@@ -567,6 +595,12 @@ class DetailActivity : AppCompatActivity() {
     private fun launchPlayer(playItem: PlayItem, vlc: Boolean = false) {
         starting = false
         Playback.item = playItem
+        // Ver en compañía: se le abre también a la otra tele, en el mismo punto
+        if (Sofa.active) {
+            val start = Sofa.pendingStart ?: if (playItem.fromStart) 0L
+            else getSharedPreferences("resume", MODE_PRIVATE).getLong(playItem.resumeKey, 0L)
+            Sofa.announce(item, playItem.resumeKey, start)
+        }
         if (vlc) {
             startActivity(Intent(this, VlcPlayerActivity::class.java))
             return

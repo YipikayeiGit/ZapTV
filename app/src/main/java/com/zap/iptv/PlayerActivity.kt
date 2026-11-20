@@ -215,7 +215,8 @@ class PlayerActivity : AppCompatActivity() {
     private fun startVod() {
         val it = item ?: return
         setupIntro()
-        val start = savedPosition(it)
+        val start = Sofa.pendingStart?.also { Sofa.pendingStart = null } ?: savedPosition(it)
+        setupSofa()
         playVod(it.url, startAt = start)
         if (start > 0) {
             val m = start / 60_000
@@ -225,7 +226,9 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
-    private fun playVod(url: String, startAt: Long) {
+    private fun playVod(url: String, startAt: Long) = quiet { playVodInner(url, startAt) }
+
+    private fun playVodInner(url: String, startAt: Long) {
         val it = item ?: return
         val subs = it.subtitles.map { s ->
             MediaItem.SubtitleConfiguration.Builder(Uri.parse(s.url))
@@ -319,6 +322,44 @@ class PlayerActivity : AppCompatActivity() {
 
     private var switchedToVlc = false
     private var intro: IntroSkip? = null
+
+    // ---------- Ver en compañía ----------
+
+    private var sofa: SofaController? = null
+    private var sofaApplying = false
+
+    /** Órdenes al reproductor que no son tuyas (no se avisan a la otra tele). */
+    private inline fun quiet(block: () -> Unit) {
+        val was = sofaApplying
+        sofaApplying = true
+        try { block() } finally { sofaApplying = was }
+    }
+
+    private fun setupSofa() {
+        if (!Sofa.active || live || sofa != null) return
+        val c = SofaController(this, findViewById(android.R.id.content), object : SofaPlayer {
+            override fun position() = player.currentPosition
+            override fun isPlaying() = player.playWhenReady
+            override fun isBuffering() = player.playbackState == Player.STATE_BUFFERING
+            override fun play() = quiet { player.play() }
+            override fun pause() = quiet { player.pause() }
+            override fun seek(ms: Long) = quiet {
+                if (player.isCurrentMediaItemSeekable) player.seekTo(ms.coerceAtLeast(0))
+            }
+            override fun setRate(rate: Float) = player.setPlaybackSpeed(rate)
+        })
+        sofa = c
+        player.addListener(object : Player.Listener {
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                if (sofaApplying || reason != Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST) return
+                if (playWhenReady) c.userPlayRequested() else c.userPaused()
+            }
+
+            override fun onPositionDiscontinuity(old: Player.PositionInfo, new: Player.PositionInfo, reason: Int) {
+                if (!sofaApplying && reason == Player.DISCONTINUITY_REASON_SEEK) c.userSeeked(new.positionMs)
+            }
+        })
+    }
 
     private fun setupIntro() {
         val it = item ?: return
@@ -600,6 +641,11 @@ class PlayerActivity : AppCompatActivity() {
         if (event.action != KeyEvent.ACTION_DOWN || playerView.isControllerFullyVisible) {
             return super.dispatchKeyEvent(event)
         }
+        // Ver en compañía, en pausa: ← → ajustan solo esta tele
+        if (sofa?.handleKey(event) == true) {
+            swallowed += code
+            return true
+        }
 
         val handled = if (!live) {
             when (code) {
@@ -638,7 +684,7 @@ class PlayerActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         if (::player.isInitialized) {
-            player.play()
+            quiet { player.play() }
             if (!live && item?.plexKey != null) {
                 handler.removeCallbacks(plexReporter)
                 handler.postDelayed(plexReporter, 10_000)
@@ -657,7 +703,7 @@ class PlayerActivity : AppCompatActivity() {
                 savePosition()
                 reportPlex(stopped = true)
             }
-            player.pause()
+            quiet { player.pause() }
         }
         handler.removeCallbacks(plexReporter)
         handler.removeCallbacks(watchdog)
@@ -695,6 +741,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        sofa?.release()
         intro?.release()
         handler.removeCallbacksAndMessages(null)
         if (::player.isInitialized) player.release()

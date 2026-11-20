@@ -14,7 +14,7 @@ android {
         // Número de compilación de GitHub: así la app sabe si hay una versión más nueva
         val build = System.getenv("BUILD_NUMBER")?.toIntOrNull() ?: 1
         versionCode = build
-        versionName = "5.0 ($build)"
+        versionName = "5.1 ($build)"
         // Solo los procesadores de Fire TV y móviles: APK más pequeña
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
     }
@@ -71,6 +71,8 @@ dependencies {
     implementation("org.jellyfin.media3:media3-ffmpeg-decoder:$media3+1")
     implementation("io.coil-kt:coil:2.7.0")
     implementation("androidx.palette:palette-ktx:1.0.0")
+    // Ver en compañía: avisos entre teles por MQTT
+    implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
     // Plan B para formatos que ExoPlayer no abre (AVI/DivX/XviD, 10 bits…)
     implementation("org.videolan.android:libvlc-all:3.6.0")
     implementation("com.google.zxing:core:3.5.3")

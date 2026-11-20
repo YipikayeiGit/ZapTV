@@ -929,6 +929,7 @@ class MainActivity : AppCompatActivity() {
                     "Audio por defecto\n${Languages.audioLabel(this)}",
                     "Subtítulos por defecto\n${Languages.subsLabel(this)}",
                     "Formato de subtítulos\n${SubStyle.summary(this)}",
+                    "🛋 Ver en compañía\n" + (Sofa.code?.let { "Sesión $it activa" } ?: "Ver lo mismo a la vez que otra tele"),
                     "Actualizar app\nVersión $version",
                 )
             ) { _, which ->
@@ -938,10 +939,89 @@ class MainActivity : AppCompatActivity() {
                     2 -> pickLanguage(audio = true)
                     3 -> pickLanguage(audio = false)
                     4 -> showSubStyle()
+                    5 -> showSofa()
                     else -> checkUpdate(manual = true)
                 }
             }
             .show()
+    }
+
+    // ---------- Ver en compañía ----------
+
+    private fun showSofa() {
+        val code = Sofa.code
+        if (code != null) {
+            MaterialAlertDialogBuilder(this)
+                .setTitle("🛋 Sesión $code")
+                .setMessage(
+                    (if (Sofa.peerOnline) "La otra tele está conectada." else "La otra tele no está conectada ahora.") +
+                        "\n\nTodo lo que pongáis cualquiera de los dos se abrirá también en la otra tele."
+                )
+                .setPositiveButton("Seguir") { _, _ -> }
+                .setNegativeButton("Salir de la sesión") { _, _ ->
+                    Sofa.leave()
+                    Toast.makeText(this, "Has salido de ver en compañía", Toast.LENGTH_SHORT).show()
+                }
+                .show()
+            return
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("🛋 Ver en compañía")
+            .setItems(arrayOf("Crear sesión\nTe doy un código para la otra tele", "Unirme con un código\nMe lo da la otra tele")) { _, which ->
+                if (which == 0) createSofa() else joinSofa()
+            }
+            .show()
+    }
+
+    private fun createSofa() {
+        val code = Sofa.create(this)
+        val text = "Código:  $code\n\nDáselo a la otra persona (Ajustes → Ver en compañía → Unirme).\n\n" +
+            "Cuando se una, elige cualquier película o capítulo y se abrirá también en su tele.\n\n"
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle("🛋 Sesión creada")
+            .setMessage(text + "⌛ Esperando a que se una…")
+            .setPositiveButton("Listo") { _, _ -> }
+            .setNegativeButton("Cancelar sesión") { _, _ -> Sofa.leave() }
+            .show()
+        Sofa.onPeer = { if (dialog.isShowing) dialog.setMessage(text + "✓ La otra tele se ha unido") }
+    }
+
+    private fun joinSofa() {
+        val input = android.widget.EditText(this).apply {
+            hint = "Código (4 letras o números)"
+            isSingleLine = true
+            filters = arrayOf(android.text.InputFilter.AllCaps(), android.text.InputFilter.LengthFilter(4))
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_DONE
+        }
+        val box = android.widget.FrameLayout(this).apply {
+            val pad = (24 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad / 2, pad, 0)
+            addView(input)
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("🛋 Unirme")
+            .setView(box)
+            .setPositiveButton("Unirme") { _, _ ->
+                val wait = MaterialAlertDialogBuilder(this)
+                    .setMessage("Buscando la otra tele…")
+                    .setCancelable(false)
+                    .show()
+                Sofa.join(this, input.text.toString()) { error ->
+                    wait.dismiss()
+                    if (error != null) {
+                        Toast.makeText(this, error, Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(
+                            this,
+                            "🛋 Te has unido a ${Sofa.code}. Lo que ponga la otra tele se abrirá aquí.",
+                            Toast.LENGTH_LONG,
+                        ).show()
+                    }
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+        input.requestFocus()
     }
 
     /** Menú del formato de subtítulos: cada opción abre su lista y vuelve aquí. */
