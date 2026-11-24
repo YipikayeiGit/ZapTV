@@ -211,21 +211,21 @@ class VlcPlayerActivity : AppCompatActivity() {
                 return
             }
             val t = mp.time
+            // Imagen congelada con el sonido siguiendo: el tiempo avanza pero no se pinta ningún fotograma nuevo
+            val shown = framesShown()
+            videoStuckSecs = if (shown != null && shown == lastShown && t != lastTime && hasVideo()) videoStuckSecs + 1 else 0
+            if (shown != null) lastShown = shown
+            if (videoStuckSecs >= 3) {
+                videoStuckSecs = 0
+                reopen(t, if (hardware) "La imagen se ha congelado · reproduciendo en modo compatible…" else "La imagen se ha congelado · recuperándola…")
+                return
+            }
             frozenSecs = if (t == lastTime) frozenSecs + 1 else 0
             lastTime = t
             if (frozenSecs < 4) return
             frozenSecs = 0
-            val it = item ?: return
             if (hardware) {
-                // Se reabre en el mismo punto decodificando por software
-                hardware = false
-                showLabel("Se ha atascado · reproduciendo en modo compatible…")
-                startAt = t + 500
-                started = false
-                tracksApplied = false
-                mp.stop()
-                openMedia(it, false)
-                mp.play()
+                reopen(t + 500, "Se ha atascado · reproduciendo en modo compatible…")
             } else if (cache?.done == false) {
                 // Aún descargando: es la conexión, no el archivo; se espera sin saltar nada
                 showLabel("Cargando…")
@@ -235,6 +235,42 @@ class VlcPlayerActivity : AppCompatActivity() {
                 mp.setTime(t + 3_000)
             }
         }
+    }
+
+    private var videoStuckSecs = 0
+    private var lastShown = -1
+    private var reopens = 0
+
+    /** Fotogramas pintados hasta ahora (null si VLC no lo dice). */
+    private fun framesShown(): Int? {
+        val m = mp.media ?: return null
+        return try { m.stats?.displayedPictures } finally { m.release() }
+    }
+
+    private fun framesLost(): Int? {
+        val m = mp.media ?: return null
+        return try { m.stats?.lostPictures } finally { m.release() }
+    }
+
+    private fun hasVideo() = (mp.videoTracksCount) > 0
+
+    /**
+     * Vuelve a abrir el vídeo en [at]. La primera vez deja de usar el chip de vídeo del aparato
+     * (que es el que se cuelga), luego solo reabre; como mucho unas pocas veces.
+     */
+    private fun reopen(at: Long, message: String) {
+        val it = item ?: return
+        if (reopens >= 4) return
+        reopens++
+        hardware = false
+        showLabel(message)
+        startAt = at.coerceAtLeast(0)
+        started = false
+        tracksApplied = false
+        lastShown = -1
+        mp.stop()
+        openMedia(it, false)
+        mp.play()
     }
 
     // ---------- Idiomas por defecto (por el nombre de la pista) ----------
@@ -480,6 +516,7 @@ class VlcPlayerActivity : AppCompatActivity() {
         item?.techNote,
         "${clock(mp.time)} / ${clock(mp.length)}",
         "Lectura: " + (cache?.status() ?: cacheNote ?: "directa"),
+        framesShown()?.let { "Fotogramas: $it mostrados · ${framesLost() ?: 0} perdidos" + if (reopens > 0) " · recuperado $reopens ${if (reopens == 1) "vez" else "veces"}" else "" },
         Plex.lastRemuxNote?.let { "Plex: $it" },
         "Origen: " + (if (item?.plexServer != null) "Plex" else "IPTV") + " · decodificación " + (if (hardware) "por chip" else "por software") +
             (if (OLD_CODECS.containsMatchIn(item?.techNote.orEmpty().lowercase())) " · lector FFmpeg" else ""),
