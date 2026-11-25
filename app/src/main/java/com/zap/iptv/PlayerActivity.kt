@@ -257,7 +257,7 @@ class PlayerActivity : AppCompatActivity() {
         var changed = false
 
         fun choose(type: Int, code: String, wantForced: Boolean = false) {
-            fun score(f: Format) = Languages.penalty(f) - if (wantForced && Languages.isForced(f)) 8 else 0
+            fun score(f: Format) = Languages.penalty(f, code) - if (wantForced && Languages.isForced(f)) 8 else 0
             val groups = tracks.groups.filter { it.type == type }
             val candidates = groups.flatMap { g ->
                 (0 until g.length).filter { i -> g.isTrackSupported(i) && Languages.matches(g.getTrackFormat(i), code) }

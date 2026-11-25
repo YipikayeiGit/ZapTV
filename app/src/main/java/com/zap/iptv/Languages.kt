@@ -53,7 +53,8 @@ object Languages {
 
     /** ¿Esta pista está en el idioma [code]? Mira el código de idioma y también el nombre. */
     fun matches(f: Format, code: String): Boolean {
-        val aliases = ALIASES[code] ?: setOf(code)
+        val base = code.substringBefore('-')
+        val aliases = ALIASES[base] ?: setOf(base)
         val lang = f.language?.lowercase()?.substringBefore('-')?.substringBefore('_')
         if (lang != null && lang in aliases) return true
         return words(f.label).any { it in aliases }
@@ -63,19 +64,37 @@ object Languages {
 
     /** Código de idioma de una pista ("es", "en"…) o null si no se sabe. */
     fun codeOf(f: Format): String? {
-        options.firstOrNull { matches(f, it.first) }?.let { return it.first }
+        // Español: se distingue latino de castellano (para recordar cuál elegiste)
+        options.firstOrNull { matches(f, it.first) }?.let { return if (it.first == "es" && isLatino(f)) "es-lat" else it.first }
         return f.language?.lowercase()?.substringBefore('-')?.takeIf { it.isNotBlank() && it != "und" }
     }
 
     fun isForced(f: Format): Boolean =
         f.selectionFlags and C.SELECTION_FLAG_FORCED != 0 || words(f.label).any { it in FORCED }
 
-    /** Menor es mejor: castellano antes que latino, completos antes que forzados o para sordos. */
-    fun penalty(f: Format): Int {
+    private val LATINO = setOf("latino", "latin", "latam", "latinoamerica", "latinoamericano", "lat", "mexico", "mex", "hispanoamerica")
+    private val CASTELLANO = setOf("castellano", "castilian", "espana", "spain", "iberico")
+
+    fun isLatino(f: Format): Boolean {
+        val w = words(f.label) + words(f.language)
+        return w.any { it in LATINO } || "419" in (f.language ?: "") || "-mx" in (f.language ?: "").lowercase()
+    }
+
+    /**
+     * Menor es mejor: castellano antes que latino (salvo que [code] pida latino, "es-lat"),
+     * completos antes que forzados o para sordos.
+     */
+    fun penalty(f: Format, code: String = ""): Int {
         val w = words(f.label) + words(f.language)
         var p = 0
         if (f.selectionFlags and C.SELECTION_FLAG_FORCED != 0 || w.any { it in FORCED }) p += 4
-        if ("latino" in w || "latin" in w || "latam" in w || "419" in (f.language ?: "")) p += 2
+        val latino = isLatino(f)
+        if (code.endsWith("-lat")) {
+            if (!latino) p += 3
+        } else {
+            if (latino) p += 3
+            else if (w.none { it in CASTELLANO }) p += 1 // "Spanish" a secas: por detrás de "Castellano"/"España"
+        }
         if ("sdh" in w || "cc" in w) p += 1
         return p
     }

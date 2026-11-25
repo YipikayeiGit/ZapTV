@@ -280,8 +280,9 @@ class VlcPlayerActivity : AppCompatActivity() {
         tracksApplied = true
         val key = item?.resumeKey
         val audio = SeriesTracks.audio(this, key)?.lang ?: Languages.audioOrDevice(this)
-        mp.audioTracks?.filter { it.id >= 0 }
-            ?.firstOrNull { matches(it.name, audio) }
+        // Entre varias del mismo idioma, la mejor: castellano antes que latino (o al revés si elegiste latino)
+        mp.audioTracks?.filter { it.id >= 0 && matches(it.name, audio) }
+            ?.minByOrNull { Languages.penalty(androidx.media3.common.Format.Builder().setLabel(it.name).build(), audio) }
             ?.let { mp.setAudioTrack(it.id) }
         val saved = SeriesTracks.subs(this, key)
         val subs = if (saved?.off == true) "" else saved?.lang ?: Languages.subs(this)
